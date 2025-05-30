@@ -68,12 +68,15 @@ def setup_training(config: Dict, resume_path: Optional[str] = None):
     """Setup training components"""
     
     # Create directories
-    os.makedirs(config.logging.log_dir, exist_ok=True)
-    os.makedirs(config.logging.checkpoint_dir, exist_ok=True)
+    os.makedirs(config.experiment.output_dir, exist_ok=True)
+    checkpoint_dir = os.path.join(config.experiment.output_dir, config.experiment.name, "checkpoints")
+    log_dir = os.path.join(config.experiment.output_dir, config.experiment.name, "logs")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
     
     # Setup logger
     log_file = os.path.join(
-        config.logging.log_dir,
+        log_dir,
         f"train_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     )
     setup_logger(log_file)
@@ -89,7 +92,7 @@ def setup_training(config: Dict, resume_path: Optional[str] = None):
     # Create optimizer
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=config.training.learning_rate,
+        lr=config.training.optimizer.lr,
         weight_decay=config.training.optimizer.weight_decay,
         betas=config.training.optimizer.betas
     )
@@ -97,8 +100,8 @@ def setup_training(config: Dict, resume_path: Optional[str] = None):
     # Create scheduler
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
-        T_max=config.training.scheduler.T_max,
-        eta_min=config.training.scheduler.eta_min
+        T_max=config.training.num_epochs,
+        eta_min=config.training.scheduler.min_lr
     )
     
     # Create EMA
@@ -303,7 +306,7 @@ def main():
     # Setup Weights & Biases if requested
     if args.wandb:
         wandb.init(
-            project="structdiff",
+            project=config.get("wandb", {}).get("project", "structdiff"),
             config=OmegaConf.to_container(config, resolve=True)
         )
     
@@ -333,32 +336,29 @@ def main():
     
     train_loader = DataLoader(
         train_dataset,
-        batch_size=config.training.batch_size,
+        batch_size=config.data.batch_size,
         shuffle=True,
-        num_workers=4,
+        num_workers=config.data.num_workers,
         pin_memory=True,
         collate_fn=collator
     )
     
     val_loader = DataLoader(
         val_dataset,
-        batch_size=config.training.batch_size * 2,
+        batch_size=config.data.batch_size * 2,
         shuffle=False,
-        num_workers=4,
+        num_workers=config.data.num_workers,
         pin_memory=True,
         collate_fn=collator
     )
     
     # Setup tensorboard
-    writer = SummaryWriter(
-        log_dir=os.path.join(config.logging.log_dir, "tensorboard")
-    )
+    tensorboard_dir = os.path.join(config.experiment.output_dir, config.experiment.name, "tensorboard")
+    writer = SummaryWriter(log_dir=tensorboard_dir)
     
     # Setup checkpoint manager
-    checkpoint_manager = CheckpointManager(
-        config.logging.checkpoint_dir,
-        max_checkpoints=5
-    )
+    checkpoint_dir = os.path.join(config.experiment.output_dir, config.experiment.name, "checkpoints")
+    checkpoint_manager = CheckpointManager(checkpoint_dir, max_checkpoints=5)
     
     # Training loop
     best_val_loss = float('inf')

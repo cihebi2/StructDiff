@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from typing import Dict, Tuple, Optional, List
 from einops import rearrange
 
-from .denoiser import StructureAwareDenoiser
+from .denoise import StructureAwareDenoiser
 from .structure_encoder import MultiScaleStructureEncoder
 from ..diffusion.gaussian_diffusion import GaussianDiffusion
 from ..utils.logger import get_logger
@@ -34,7 +34,7 @@ class StructDiff(nn.Module):
         
         # Initialize denoiser with cross-attention
         self.denoiser = StructureAwareDenoiser(
-            seq_hidden_dim=config.model.sequence_encoder.hidden_dim,
+            seq_hidden_dim=self.seq_hidden_dim,  # 使用实际的hidden_dim
             struct_hidden_dim=config.model.structure_encoder.hidden_dim,
             denoiser_config=config.model.denoiser
         )
@@ -48,22 +48,30 @@ class StructDiff(nn.Module):
         )
         
         # Loss weights
-        self.loss_weights = config.training.loss_weights
+        self.loss_weights = config.training_config.loss_weights
         
     def _init_sequence_encoder(self):
         """Initialize ESM-2 sequence encoder"""
-        from transformers import AutoModel
+        from transformers import AutoModel, AutoTokenizer
+        
+        model_name = self.config.model.sequence_encoder.pretrained_model
         
         self.sequence_encoder = AutoModel.from_pretrained(
-            self.config.model.sequence_encoder.path,
+            model_name,
             trust_remote_code=True
         )
         
-        if self.config.model.sequence_encoder.freeze:
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        
+        # Get actual hidden dimension
+        self.seq_hidden_dim = self.sequence_encoder.config.hidden_size
+        
+        if self.config.model.sequence_encoder.freeze_encoder:
             for param in self.sequence_encoder.parameters():
                 param.requires_grad = False
                 
-        logger.info(f"Initialized sequence encoder: {self.config.model.sequence_encoder.name}")
+        logger.info(f"Initialized sequence encoder: {model_name}")
+        logger.info(f"Sequence encoder hidden dim: {self.seq_hidden_dim}")
     
     def forward(
         self,
@@ -74,29 +82,17 @@ class StructDiff(nn.Module):
         conditions: Optional[Dict[str, torch.Tensor]] = None,
         return_loss: bool = True
     ) -> Dict[str, torch.Tensor]:
-        """
-        Forward pass of StructDiff
-        
-        Args:
-            sequences: Token ids of shape (batch_size, seq_len)
-            attention_mask: Attention mask of shape (batch_size, seq_len)
-            timesteps: Diffusion timesteps of shape (batch_size,)
-            structures: Optional structure features
-            conditions: Optional conditioning information
-            return_loss: Whether to compute and return loss
-            
-        Returns:
-            Dictionary containing predictions and optionally losses
-        """
+        """Forward pass of StructDiff"""
         batch_size = sequences.shape[0]
         device = sequences.device
         
         # Get sequence embeddings
-        with torch.no_grad() if self.config.model.sequence_encoder.freeze else torch.enable_grad():
-            seq_embeddings = self.sequence_encoder(
+        with torch.no_grad() if self.config.model.sequence_encoder.freeze_encoder else torch.enable_grad():
+            seq_outputs = self.sequence_encoder(
                 input_ids=sequences,
                 attention_mask=attention_mask
-            ).last_hidden_state  # (B, L, D_seq)
+            )
+            seq_embeddings = seq_outputs.last_hidden_state  # (B, L, D_seq)
         
         # Add noise for diffusion training
         if return_loss:
@@ -155,9 +151,10 @@ class StructDiff(nn.Module):
         losses = {}
         
         # Sequence reconstruction loss
+        mask_expanded = attention_mask.bool().unsqueeze(-1).expand_as(denoised_embeddings)
         seq_loss = F.mse_loss(
-            denoised_embeddings[attention_mask.bool()],
-            target_embeddings[attention_mask.bool()]
+            denoised_embeddings[mask_expanded],
+            target_embeddings[mask_expanded]
         )
         losses['sequence_loss'] = seq_loss * self.loss_weights.sequence
         
@@ -168,9 +165,10 @@ class StructDiff(nn.Module):
                 denoised_embeddings, attention_mask
             )
             
+            mask_expanded_struct = attention_mask.bool().unsqueeze(-1).expand_as(predicted_structure)
             struct_loss = F.mse_loss(
-                predicted_structure[attention_mask.bool()],
-                structure_features[attention_mask.bool()]
+                predicted_structure[mask_expanded_struct],
+                structure_features[mask_expanded_struct]
             )
             losses['structure_loss'] = struct_loss * self.loss_weights.structure
         
@@ -292,6 +290,6 @@ class StructDiff(nn.Module):
         attention_mask: torch.Tensor
     ) -> List[str]:
         """Decode embeddings back to sequences"""
-        # This would use the ESM tokenizer and decoder
-        # Placeholder implementation
-        return ["GENERATED_SEQUENCE"] * embeddings.shape[0]
+        # This would need a proper decoder - for now return placeholder
+        batch_size = embeddings.shape[0]
+        return ["ACDEFGHIKLMNPQRSTVWY"] * batch_size  # 20 AA sequence

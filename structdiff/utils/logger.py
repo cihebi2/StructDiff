@@ -16,7 +16,8 @@ def setup_logger(
     logging.basicConfig(
         level=level,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=handlers
+        handlers=handlers,
+        force=True  # Override existing configuration
     )
 
 

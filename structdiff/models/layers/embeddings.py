@@ -132,3 +132,4 @@ class PositionalEncoding(nn.Module):
         """Add positional encoding to input"""
         seq_len = x.shape[1]
         return x + self.encoding[:, :seq_len, :]
+# Updated: 05/30/2025 22:59:09

@@ -110,3 +110,4 @@ class PeptideStructureCollator:
                 collated_structures[key] = torch.stack(padded)
         
         return collated_structures
+# Updated: 05/30/2025 22:59:09

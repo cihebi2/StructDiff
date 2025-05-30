@@ -132,3 +132,4 @@ def compute_amphipathicity(sequence: str) -> float:
     ideal_spacings = np.sum((spacings >= 2) & (spacings <= 5))
     
     return ideal_spacings / max(len(spacings), 1)
+# Updated: 05/30/2025 22:59:09

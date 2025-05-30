@@ -180,3 +180,4 @@ class ConfigManager:
         checkpoint_path = Path(checkpoint_path)
         config_path = checkpoint_path.parent / f"{checkpoint_path.stem}_config.yaml"
         save_config(self.get_config(), config_path)
+# Updated: 05/30/2025 22:59:09

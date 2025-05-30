@@ -204,3 +204,4 @@ class GaussianDiffusion:
             model_output = uncond_output + guidance_scale * (cond_output - uncond_output)
         
         return self.p_sample(model_output, x_t, t_batch)
+# Updated: 05/30/2025 22:59:09

@@ -59,3 +59,4 @@ class EMA:
         """Load EMA state dict"""
         self.shadow_params = state_dict['shadow_params']
         self.decay = state_dict['decay']
+# Updated: 05/30/2025 22:59:09

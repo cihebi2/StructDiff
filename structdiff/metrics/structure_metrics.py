@@ -76,3 +76,4 @@ def compute_structure_metrics(
             metrics['avg_tm_score'] = 0.7
     
     return metrics
+# Updated: 05/30/2025 22:59:09

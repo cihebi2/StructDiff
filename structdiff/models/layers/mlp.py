@@ -230,3 +230,4 @@ class ConditionalMLP(nn.Module):
             x = x * (1 + scale) + shift
         
         return self.mlp(x)
+# Updated: 05/30/2025 22:59:09

@@ -345,3 +345,4 @@ def get_sampler(
         raise ValueError(f"Unknown sampler: {name}")
     
     return samplers[name](diffusion_model, **kwargs)
+# Updated: 05/30/2025 22:59:09

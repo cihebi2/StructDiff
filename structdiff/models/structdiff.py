@@ -293,3 +293,4 @@ class StructDiff(nn.Module):
         # This would need a proper decoder - for now return placeholder
         batch_size = embeddings.shape[0]
         return ["ACDEFGHIKLMNPQRSTVWY"] * batch_size  # 20 AA sequence
+# Updated: 05/30/2025 22:59:09

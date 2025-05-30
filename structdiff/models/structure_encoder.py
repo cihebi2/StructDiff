@@ -213,3 +213,4 @@ class TopologyEncoder(nn.Module):
         features = torch.stack(position_features, dim=1)  # (B, L, hidden_dim)
         
         return self.projection(features) * mask.unsqueeze(-1)
+# Updated: 05/30/2025 22:59:09

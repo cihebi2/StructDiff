@@ -86,3 +86,4 @@ def compute_sequence_metrics(
         metrics['avg_similarity_to_reference'] = np.mean(similarities)
     
     return metrics
+# Updated: 05/30/2025 22:59:09

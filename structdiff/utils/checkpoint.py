@@ -53,3 +53,4 @@ class CheckpointManager:
         while len(checkpoints) > self.max_checkpoints:
             _, filename = checkpoints.pop(0)
             os.remove(os.path.join(self.checkpoint_dir, filename))
+# Updated: 05/30/2025 22:59:09

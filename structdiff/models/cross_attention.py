@@ -152,3 +152,4 @@ class BiDirectionalCrossAttention(nn.Module):
         }
         
         return seq_fused, struct_fused, attn_weights
+# Updated: 05/30/2025 22:59:09

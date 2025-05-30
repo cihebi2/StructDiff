@@ -1,0 +1,83 @@
+# Generation configuration
+generation:
+  # Model checkpoint
+  checkpoint_path: null  # Required, specify via CLI
+  device: "cuda"
+  
+  # Generation parameters
+  num_samples: 100
+  batch_size: 32
+  
+  # Sampling configuration
+  sampling_method: "ddpm"  # ddpm, ddim, or pndm
+  num_inference_steps: 50  # For DDIM/PNDM
+  guidance_scale: 1.0
+  
+  # Sequence parameters
+  length_distribution:
+    type: "uniform"  # uniform, normal, or fixed
+    min_length: 10
+    max_length: 30
+    mean_length: 20
+    std_length: 5
+    fixed_length: null
+  
+  # Conditional generation
+  conditions:
+    peptide_type: null  # antimicrobial, antifungal, antiviral, or null
+    target_structure: null  # Secondary structure string or null
+    
+  # Structure-guided generation
+  structure_guidance:
+    enabled: false
+    strength: 0.5
+    target_helix_content: null
+    target_sheet_content: null
+    
+  # Diversity control
+  diversity:
+    temperature: 1.0
+    top_k: null
+    top_p: null
+    
+  # Output configuration
+  output:
+    format: "fasta"  # fasta, csv, or json
+    path: "./generated_peptides.fasta"
+    include_structures: false
+    include_confidence: false
+    
+  # Post-processing
+  postprocess:
+    remove_duplicates: true
+    filter_by_length: true
+    min_length: 5
+    max_length: 50
+    
+  # Evaluation
+  evaluate:
+    enabled: true
+    metrics:
+      - sequence_validity
+      - diversity
+      - novelty
+    reference_set: null
+
+# Advanced sampling options
+advanced_sampling:
+  # Classifier-free guidance
+  cfg:
+    enabled: true
+    unconditional_ratio: 0.1
+    
+  # Structure consistency
+  structure_consistency:
+    enabled: true
+    check_interval: 10
+    consistency_threshold: 0.8
+    
+  # Adaptive sampling
+  adaptive:
+    enabled: false
+    quality_threshold: 0.7
+    max_attempts: 5

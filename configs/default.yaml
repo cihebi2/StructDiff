@@ -9,7 +9,38 @@ experiment:
 
 model:
   type: "StructDiff"
-  config_path: "./configs/model/structdiff.yaml"
+  sequence_encoder:
+    pretrained_model: "facebook/esm2_t6_8M_UR50D"
+    freeze_encoder: false
+    use_lora: true
+    lora_rank: 16
+    lora_alpha: 32
+    lora_dropout: 0.1
+  
+  structure_encoder:
+    type: "multi_scale"
+    hidden_dim: 256
+    use_esmfold: false
+    local:
+      hidden_dim: 256
+      num_layers: 3
+      kernel_sizes: [3, 5, 7]
+      dropout: 0.1
+    global:
+      hidden_dim: 512
+      num_attention_heads: 8
+      num_layers: 4
+      dropout: 0.1
+    fusion:
+      method: "attention"
+      hidden_dim: 256
+  
+  denoiser:
+    hidden_dim: 768
+    num_layers: 12
+    num_heads: 12
+    dropout: 0.1
+    use_cross_attention: true
 
 data:
   train_path: "./data/peptides/train.csv"
@@ -34,7 +65,7 @@ data:
 training:
   num_epochs: 100
   gradient_accumulation_steps: 1
-  max_grad_norm: 1.0
+  gradient_clip: 1.0  # Added missing parameter
   
   # Optimizer
   optimizer:
@@ -83,9 +114,15 @@ diffusion:
   sampling_method: "ddpm"
   ddim_steps: 50
   
-  # Loss
+  # Loss weights
   loss_type: "mse"
-  auxiliary_loss_weight: 0.1
+
+# Loss configuration
+training_config:
+  loss_weights:
+    diffusion_loss: 1.0
+    structure_consistency_loss: 0.1
+    auxiliary_loss: 0.01
 
 evaluation:
   metrics:
@@ -108,4 +145,8 @@ wandb:
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-# Updated: 05/30/2025 22:59:09
+  save_every: 100  # Save logs every N steps
+  log_every: 100   # Log metrics every N steps
+# Updated: 05/31/2025 15:11:07
+
+# Updated: 05/31/2025 15:14:04

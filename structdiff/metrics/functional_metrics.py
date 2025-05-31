@@ -133,3 +133,7 @@ def compute_amphipathicity(sequence: str) -> float:
     
     return ideal_spacings / max(len(spacings), 1)
 # Updated: 05/30/2025 22:59:09
+
+# Updated: 05/31/2025 15:11:07
+
+# Updated: 05/31/2025 15:14:04

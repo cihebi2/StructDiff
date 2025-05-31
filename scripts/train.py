@@ -32,7 +32,6 @@ from structdiff.data.collator import PeptideStructureCollator
 from structdiff.utils.checkpoint import CheckpointManager
 from structdiff.utils.ema import EMA
 from structdiff.utils.logger import setup_logger, get_logger
-from structdiff.metrics import compute_validation_metrics
 
 logger = get_logger(__name__)
 
@@ -62,6 +61,26 @@ def parse_args():
         help="Run in debug mode with reduced data"
     )
     return parser.parse_args()
+
+
+def compute_validation_metrics(
+    predictions: torch.Tensor,
+    targets: torch.Tensor,
+    config: Dict
+) -> Dict[str, float]:
+    """Compute validation metrics"""
+    metrics = {}
+    
+    # Basic MSE loss
+    mse_loss = F.mse_loss(predictions, targets).item()
+    metrics['val_loss'] = mse_loss
+    
+    # Perplexity (approximation)
+    metrics['perplexity'] = torch.exp(torch.tensor(mse_loss)).item()
+    
+    # You can add more sophisticated metrics here
+    
+    return metrics
 
 
 def setup_training(config: Dict, resume_path: Optional[str] = None):
@@ -105,7 +124,9 @@ def setup_training(config: Dict, resume_path: Optional[str] = None):
     )
     
     # Create EMA
-    ema = EMA(model, decay=config.training.ema_decay)
+    ema = None
+    if config.training.use_ema:
+        ema = EMA(model, decay=config.training.ema_decay, device=device)
     
     # Resume from checkpoint if provided
     start_epoch = 0
@@ -115,12 +136,13 @@ def setup_training(config: Dict, resume_path: Optional[str] = None):
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        ema.load_state_dict(checkpoint['ema_state_dict'])
+        if ema and 'ema_state_dict' in checkpoint:
+            ema.load_state_dict(checkpoint['ema_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
         global_step = checkpoint['global_step']
         logger.info(f"Resumed from epoch {start_epoch}, step {global_step}")
     
-    return model, optimizer, scheduler, ema, device, start_epoch, global_step
+    return model, optimizer, scheduler, ema, device, start_epoch, global_step, checkpoint_dir
 
 
 def train_epoch(
@@ -128,7 +150,7 @@ def train_epoch(
     train_loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler._LRScheduler,
-    ema: EMA,
+    ema: Optional[EMA],
     device: torch.device,
     config: Dict,
     epoch: int,
@@ -139,7 +161,7 @@ def train_epoch(
     model.train()
     
     # Setup mixed precision training
-    scaler = GradScaler()
+    scaler = GradScaler() if config.training.use_amp else None
     
     # Progress bar
     pbar = tqdm(train_loader, desc=f"Epoch {epoch}")
@@ -147,9 +169,10 @@ def train_epoch(
     # Accumulate losses
     loss_accumulator = {
         'total_loss': 0.0,
-        'sequence_loss': 0.0,
+        'diffusion_loss': 0.0,
         'structure_loss': 0.0
     }
+    accumulation_steps = 0
     
     for batch_idx, batch in enumerate(pbar):
         # Move batch to device
@@ -158,12 +181,22 @@ def train_epoch(
         # Sample timesteps
         batch_size = batch['sequences'].shape[0]
         timesteps = torch.randint(
-            0, config.model.diffusion.num_timesteps,
+            0, config.diffusion.num_timesteps,
             (batch_size,), device=device
         )
         
         # Forward pass with mixed precision
-        with autocast():
+        if config.training.use_amp and scaler is not None:
+            with autocast():
+                outputs = model(
+                    sequences=batch['sequences'],
+                    attention_mask=batch['attention_mask'],
+                    timesteps=timesteps,
+                    structures=batch.get('structures'),
+                    conditions=batch.get('conditions'),
+                    return_loss=True
+                )
+        else:
             outputs = model(
                 sequences=batch['sequences'],
                 attention_mask=batch['attention_mask'],
@@ -176,36 +209,48 @@ def train_epoch(
         loss = outputs['total_loss']
         
         # Backward pass
-        optimizer.zero_grad()
-        scaler.scale(loss).backward()
+        if config.training.use_amp and scaler is not None:
+            scaler.scale(loss).backward()
+        else:
+            loss.backward()
         
-        # Gradient clipping
-        scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(
-            model.parameters(),
-            config.training.gradient_clip
-        )
-        
-        # Optimizer step
-        scaler.step(optimizer)
-        scaler.update()
-        
-        # Update EMA
-        ema.update()
-        
-        # Update learning rate
-        scheduler.step()
+        # Gradient accumulation
+        if (batch_idx + 1) % config.training.gradient_accumulation_steps == 0:
+            if config.training.use_amp and scaler is not None:
+                # Unscale before gradient clipping
+                scaler.unscale_(optimizer)
+            
+            # Gradient clipping
+            if hasattr(config.training, 'gradient_clip') and config.training.gradient_clip > 0:
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(),
+                    config.training.gradient_clip
+                )
+            
+            # Optimizer step
+            if config.training.use_amp and scaler is not None:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
+            
+            optimizer.zero_grad()
+            
+            # Update EMA
+            if ema is not None:
+                ema.update()
         
         # Accumulate losses
         for key in loss_accumulator:
             if key in outputs:
                 loss_accumulator[key] += outputs[key].item()
+        accumulation_steps += 1
         
         # Logging
-        if global_step % config.logging.log_every == 0:
+        if global_step % config.logging.log_every == 0 and accumulation_steps > 0:
             # Average losses
             avg_losses = {
-                k: v / config.logging.log_every
+                k: v / accumulation_steps
                 for k, v in loss_accumulator.items()
             }
             
@@ -227,8 +272,12 @@ def train_epoch(
             
             # Reset accumulator
             loss_accumulator = {k: 0.0 for k in loss_accumulator}
+            accumulation_steps = 0
         
         global_step += 1
+    
+    # Update learning rate
+    scheduler.step()
     
     return global_step
 
@@ -239,11 +288,15 @@ def validate(
     device: torch.device,
     config: Dict,
     epoch: int,
-    writer: SummaryWriter
+    writer: SummaryWriter,
+    ema: Optional[EMA] = None
 ) -> Dict[str, float]:
     """Validate model"""
     model.eval()
-    ema_model = model  # Could use EMA model here
+    
+    # Use EMA model if available
+    if ema is not None:
+        ema.apply_shadow()
     
     all_losses = []
     all_predictions = []
@@ -256,13 +309,23 @@ def validate(
             # Sample timesteps
             batch_size = batch['sequences'].shape[0]
             timesteps = torch.randint(
-                0, config.model.diffusion.num_timesteps,
+                0, config.diffusion.num_timesteps,
                 (batch_size,), device=device
             )
             
             # Forward pass
-            with autocast():
-                outputs = ema_model(
+            if config.training.use_amp:
+                with autocast():
+                    outputs = model(
+                        sequences=batch['sequences'],
+                        attention_mask=batch['attention_mask'],
+                        timesteps=timesteps,
+                        structures=batch.get('structures'),
+                        conditions=batch.get('conditions'),
+                        return_loss=True
+                    )
+            else:
+                outputs = model(
                     sequences=batch['sequences'],
                     attention_mask=batch['attention_mask'],
                     timesteps=timesteps,
@@ -277,13 +340,20 @@ def validate(
             all_predictions.append(outputs['denoised_embeddings'].cpu())
             all_targets.append(batch['sequences'].cpu())
     
+    # Restore original weights if using EMA
+    if ema is not None:
+        ema.restore()
+    
     # Compute metrics
     avg_loss = sum(all_losses) / len(all_losses)
     
     # Compute additional metrics
+    predictions_tensor = torch.cat(all_predictions)
+    targets_tensor = torch.cat(all_targets)
+    
     metrics = compute_validation_metrics(
-        torch.cat(all_predictions),
-        torch.cat(all_targets),
+        predictions_tensor[:, :10, :10],  # Use subset for efficiency
+        targets_tensor[:, :10].float().unsqueeze(-1).expand(-1, -1, 10),
         config
     )
     metrics['val_loss'] = avg_loss
@@ -304,14 +374,16 @@ def main():
     config = OmegaConf.load(args.config)
     
     # Setup Weights & Biases if requested
-    if args.wandb:
+    if args.wandb or config.wandb.enabled:
         wandb.init(
-            project=config.get("wandb", {}).get("project", "structdiff"),
-            config=OmegaConf.to_container(config, resolve=True)
+            project=config.wandb.project,
+            name=config.experiment.name,
+            config=OmegaConf.to_container(config, resolve=True),
+            tags=config.wandb.tags
         )
     
     # Setup training
-    model, optimizer, scheduler, ema, device, start_epoch, global_step = setup_training(
+    model, optimizer, scheduler, ema, device, start_epoch, global_step, checkpoint_dir = setup_training(
         config, args.resume
     )
     
@@ -339,7 +411,7 @@ def main():
         batch_size=config.data.batch_size,
         shuffle=True,
         num_workers=config.data.num_workers,
-        pin_memory=True,
+        pin_memory=config.data.pin_memory,
         collate_fn=collator
     )
     
@@ -348,7 +420,7 @@ def main():
         batch_size=config.data.batch_size * 2,
         shuffle=False,
         num_workers=config.data.num_workers,
-        pin_memory=True,
+        pin_memory=config.data.pin_memory,
         collate_fn=collator
     )
     
@@ -357,8 +429,7 @@ def main():
     writer = SummaryWriter(log_dir=tensorboard_dir)
     
     # Setup checkpoint manager
-    checkpoint_dir = os.path.join(config.experiment.output_dir, config.experiment.name, "checkpoints")
-    checkpoint_manager = CheckpointManager(checkpoint_dir, max_checkpoints=5)
+    checkpoint_manager = CheckpointManager(checkpoint_dir, max_checkpoints=config.training.max_checkpoints)
     
     # Training loop
     best_val_loss = float('inf')
@@ -373,9 +444,9 @@ def main():
         )
         
         # Validate
-        if (epoch + 1) % config.logging.save_every == 0:
+        if (epoch + 1) % config.training.validate_every == 0 or epoch == config.training.num_epochs - 1:
             val_metrics = validate(
-                model, val_loader, device, config, epoch, writer
+                model, val_loader, device, config, epoch, writer, ema
             )
             
             # Save checkpoint
@@ -389,10 +460,12 @@ def main():
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'scheduler_state_dict': scheduler.state_dict(),
-                'ema_state_dict': ema.state_dict(),
                 'val_metrics': val_metrics,
                 'config': config
             }
+            
+            if ema is not None:
+                checkpoint['ema_state_dict'] = ema.state_dict()
             
             checkpoint_manager.save_checkpoint(
                 checkpoint,
@@ -401,7 +474,7 @@ def main():
             )
             
             # Log to wandb
-            if args.wandb:
+            if args.wandb or config.wandb.enabled:
                 wandb.log(val_metrics, step=global_step)
     
     writer.close()
@@ -410,4 +483,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-# Updated: 05/30/2025 22:59:09
+# Updated: 05/31/2025 15:11:07
+
+# Updated: 05/31/2025 15:14:04

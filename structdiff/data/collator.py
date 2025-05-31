@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 from typing import Dict, List, Optional
 from dataclasses import dataclass
 
@@ -70,7 +71,7 @@ class PeptideStructureCollator:
             )
         
         # Add conditions if present
-        if 'label' in batch[0]:
+        if labels:
             collated['conditions'] = {
                 'peptide_type': collated['labels']
             }
@@ -105,9 +106,15 @@ class PeptideStructureCollator:
                 for feat in values:
                     pad_size = max_len - feat.shape[0]
                     if pad_size > 0:
-                        feat = F.pad(feat, (0, 0, 0, pad_size), value=0)
+                        # Fix padding dimensions for 1D tensors
+                        if feat.dim() == 1:
+                            feat = F.pad(feat, (0, pad_size), value=0)
+                        else:
+                            feat = F.pad(feat, (0, 0, 0, pad_size), value=0)
                     padded.append(feat)
                 collated_structures[key] = torch.stack(padded)
         
         return collated_structures
-# Updated: 05/30/2025 22:59:09
+# Updated: 05/31/2025 15:11:07
+
+# Updated: 05/31/2025 15:14:04

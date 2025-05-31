@@ -1,5 +1,6 @@
 import pytest
 import numpy as np
+import torch
 
 from structdiff.metrics import (
     compute_sequence_metrics,
@@ -53,6 +54,7 @@ class TestStructureMetrics:
         
         assert 'avg_plddt' in metrics
         assert metrics['avg_plddt'] == pytest.approx(75.0, 0.1)
+        assert 'high_confidence_ratio' in metrics
 
 
 class TestDiversityMetrics:
@@ -72,4 +74,15 @@ class TestDiversityMetrics:
         assert 'unique_ratio' in metrics
         assert metrics['unique_ratio'] == 0.75
         assert 'diversity_score' in metrics
-# Updated: 05/30/2025 22:59:09
+        
+    def test_empty_sequences(self):
+        """Test with empty sequence list"""
+        sequences = []
+        
+        metrics = compute_diversity_metrics(sequences)
+        
+        # Should handle empty input gracefully
+        assert isinstance(metrics, dict)
+# Updated: 05/31/2025 15:11:07
+
+# Updated: 05/31/2025 15:14:04

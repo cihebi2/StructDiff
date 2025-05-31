@@ -6,15 +6,16 @@ __version__ = "0.1.0"
 __author__ = "Your Name"
 __email__ = "your.email@example.com"
 
-from .models import StructDiff, BaselineDiffusion
-from .data import PeptideDataset, PeptideStructureCollator
+from .models import StructDiff
+from .data import PeptideStructureDataset, PeptideStructureCollator
 from .diffusion import GaussianDiffusion
 
 __all__ = [
     "StructDiff",
-    "BaselineDiffusion", 
-    "PeptideDataset",
+    "PeptideStructureDataset",
     "PeptideStructureCollator",
     "GaussianDiffusion",
 ]
-# Updated: 05/30/2025 22:59:09
+# Updated: 05/31/2025 15:11:07
+
+# Updated: 05/31/2025 15:14:04

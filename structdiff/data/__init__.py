@@ -1,4 +1,4 @@
-from .dataset import PeptideDataset
+from .dataset import PeptideStructureDataset, PeptideStructureDatasetInference
 from .collator import PeptideStructureCollator
 from .augmentation import (
     SequenceAugmentation,
@@ -7,19 +7,13 @@ from .augmentation import (
 )
 
 __all__ = [
-    "PeptideDataset",
+    "PeptideStructureDataset",
+    "PeptideStructureDatasetInference",
     "PeptideStructureCollator",
     "SequenceAugmentation",
     "StructureAugmentation",
     "augment_batch",
 ]
+# Updated: 05/31/2025 15:11:07
 
-from .dataset import PeptideDataset, PeptideStructureDataset
-from .collator import PeptideStructureCollator
-
-__all__ = [
-    "PeptideDataset",
-    "PeptideStructureDataset", 
-    "PeptideStructureCollator",
-]
-# Updated: 05/30/2025 22:59:09
+# Updated: 05/31/2025 15:14:04

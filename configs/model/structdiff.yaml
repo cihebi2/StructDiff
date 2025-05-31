@@ -20,6 +20,8 @@ model:
   # Structure encoder
   structure_encoder:
     type: "multi_scale"
+    hidden_dim: 768
+    use_esmfold: false
     
     # Local structure features
     local:
@@ -52,9 +54,11 @@ model:
   denoiser:
     hidden_dim: 768
     num_layers: 12
-    num_attention_heads: 12
+    num_heads: 12
+    num_attention_heads: 12  # Alias for compatibility
     intermediate_dim: 3072
     dropout: 0.1
+    use_cross_attention: true
     
     # Time embedding
     time_embedding:
@@ -84,6 +88,13 @@ model:
   initialization:
     method: "normal"
     std: 0.02
+
+# Diffusion settings (merged from main config)
+diffusion:
+  num_timesteps: 1000
+  noise_schedule: "sqrt"
+  beta_start: 0.0001
+  beta_end: 0.02
     
 # Training-specific model settings
 training_config:
@@ -101,4 +112,6 @@ training_config:
   
   # Precision
   mixed_precision: true
-# Updated: 05/30/2025 22:59:09
+# Updated: 05/31/2025 15:11:07
+
+# Updated: 05/31/2025 15:14:04

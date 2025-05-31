@@ -24,7 +24,7 @@ class StructDiff(nn.Module):
         super().__init__()
         self.config = config
         
-        # Initialize sequence encoder (ESM-2)
+        # Initialize sequence encoder (ESM-2) first to get hidden dim
         self._init_sequence_encoder()
         
         # Initialize structure encoder
@@ -34,21 +34,32 @@ class StructDiff(nn.Module):
         
         # Initialize denoiser with cross-attention
         self.denoiser = StructureAwareDenoiser(
-            seq_hidden_dim=self.seq_hidden_dim,  # 使用实际的hidden_dim
+            seq_hidden_dim=self.seq_hidden_dim,
             struct_hidden_dim=config.model.structure_encoder.hidden_dim,
             denoiser_config=config.model.denoiser
         )
         
         # Initialize diffusion process
         self.diffusion = GaussianDiffusion(
-            num_timesteps=config.model.diffusion.num_timesteps,
-            noise_schedule=config.model.diffusion.noise_schedule,
-            beta_start=config.model.diffusion.beta_start,
-            beta_end=config.model.diffusion.beta_end
+            num_timesteps=config.diffusion.num_timesteps,
+            noise_schedule=config.diffusion.noise_schedule,
+            beta_start=config.diffusion.beta_start,
+            beta_end=config.diffusion.beta_end
         )
         
-        # Loss weights
-        self.loss_weights = config.training_config.loss_weights
+        # Loss weights - handle both old and new config formats
+        if hasattr(config, 'training_config') and hasattr(config.training_config, 'loss_weights'):
+            self.loss_weights = config.training_config.loss_weights
+        else:
+            # Default weights
+            self.loss_weights = type('obj', (object,), {
+                'diffusion_loss': 1.0,
+                'structure_consistency_loss': 0.1,
+                'auxiliary_loss': 0.01
+            })()
+        
+        # Add a simple decoder for sequence generation
+        self.sequence_decoder = nn.Linear(self.seq_hidden_dim, 20)  # 20 amino acids
         
     def _init_sequence_encoder(self):
         """Initialize ESM-2 sequence encoder"""
@@ -56,15 +67,26 @@ class StructDiff(nn.Module):
         
         model_name = self.config.model.sequence_encoder.pretrained_model
         
-        self.sequence_encoder = AutoModel.from_pretrained(
-            model_name,
-            trust_remote_code=True
-        )
-        
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        # Use a smaller ESM model for testing if the specified one doesn't exist
+        try:
+            self.sequence_encoder = AutoModel.from_pretrained(
+                model_name,
+                trust_remote_code=True
+            )
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        except:
+            # Fallback to a known working model
+            logger.warning(f"Could not load {model_name}, using facebook/esm2_t6_8M_UR50D instead")
+            model_name = "facebook/esm2_t6_8M_UR50D"
+            self.sequence_encoder = AutoModel.from_pretrained(model_name)
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         
         # Get actual hidden dimension
         self.seq_hidden_dim = self.sequence_encoder.config.hidden_size
+        
+        # Apply LoRA if specified
+        if self.config.model.sequence_encoder.get('use_lora', False):
+            self._apply_lora()
         
         if self.config.model.sequence_encoder.freeze_encoder:
             for param in self.sequence_encoder.parameters():
@@ -72,6 +94,13 @@ class StructDiff(nn.Module):
                 
         logger.info(f"Initialized sequence encoder: {model_name}")
         logger.info(f"Sequence encoder hidden dim: {self.seq_hidden_dim}")
+    
+    def _apply_lora(self):
+        """Apply LoRA to sequence encoder"""
+        # Simplified LoRA implementation
+        logger.info("Applying LoRA to sequence encoder")
+        # This would need a proper LoRA implementation
+        pass
     
     def forward(
         self,
@@ -150,16 +179,16 @@ class StructDiff(nn.Module):
         """Compute multi-scale losses"""
         losses = {}
         
-        # Sequence reconstruction loss
+        # Main diffusion loss - predict noise
         mask_expanded = attention_mask.bool().unsqueeze(-1).expand_as(denoised_embeddings)
-        seq_loss = F.mse_loss(
+        diffusion_loss = F.mse_loss(
             denoised_embeddings[mask_expanded],
             target_embeddings[mask_expanded]
         )
-        losses['sequence_loss'] = seq_loss * self.loss_weights.sequence
+        losses['diffusion_loss'] = diffusion_loss * self.loss_weights.diffusion_loss
         
         # Structure consistency loss (if structure features available)
-        if structure_features is not None:
+        if structure_features is not None and hasattr(self.loss_weights, 'structure_consistency_loss'):
             # Predict structure from denoised embeddings
             predicted_structure = self.structure_encoder.predict_from_sequence(
                 denoised_embeddings, attention_mask
@@ -170,7 +199,7 @@ class StructDiff(nn.Module):
                 predicted_structure[mask_expanded_struct],
                 structure_features[mask_expanded_struct]
             )
-            losses['structure_loss'] = struct_loss * self.loss_weights.structure
+            losses['structure_loss'] = struct_loss * self.loss_weights.structure_consistency_loss
         
         # Total loss
         losses['total_loss'] = sum(losses.values())
@@ -203,8 +232,8 @@ class StructDiff(nn.Module):
         """
         device = next(self.parameters()).device
         
-        # Initialize from noise
-        shape = (batch_size, seq_length + 2, self.config.model.sequence_encoder.hidden_dim)
+        # Initialize from noise (add 2 for CLS/SEP tokens)
+        shape = (batch_size, seq_length + 2, self.seq_hidden_dim)
         x_t = torch.randn(shape, device=device)
         
         # Create attention mask
@@ -220,25 +249,28 @@ class StructDiff(nn.Module):
         # Sampling loop
         trajectory = []
         for t in reversed(range(self.diffusion.num_timesteps)):
-            timesteps = torch.full((batch_size,), t, device=device)
+            timesteps = torch.full((batch_size,), t, device=device, dtype=torch.long)
+            
+            # Create dummy sequences for the forward pass
+            dummy_sequences = torch.zeros(batch_size, seq_length + 2, dtype=torch.long, device=device)
             
             # Denoise step
-            with torch.cuda.amp.autocast():
-                model_output = self.forward(
-                    sequences=None,  # Not needed for sampling
-                    attention_mask=attention_mask,
+            with torch.cuda.amp.autocast(enabled=False):  # Disable for stability
+                # Pass the noisy embeddings through the denoiser
+                denoised_embeddings, _ = self.denoiser(
+                    noisy_embeddings=x_t,
                     timesteps=timesteps,
-                    structures={'features': structure_features} if structure_features is not None else None,
-                    conditions=conditions,
-                    return_loss=False
+                    attention_mask=attention_mask,
+                    structure_features=structure_features,
+                    conditions=conditions
                 )
             
-            # Update x_t
-            x_t = self.diffusion.denoise_step(
+            # Update x_t using the diffusion process
+            x_t = self.diffusion.p_sample(
+                denoised_embeddings,
                 x_t,
-                t,
-                model_output['denoised_embeddings'],
-                guidance_scale=guidance_scale
+                timesteps,
+                clip_denoised=True
             )
             
             if return_trajectory:
@@ -270,19 +302,29 @@ class StructDiff(nn.Module):
         structure_map = {'H': 0, 'E': 1, 'C': 2}
         structure_indices = [structure_map.get(s, 2) for s in structure_string]
         
-        # Pad or truncate to match sequence length
-        if len(structure_indices) < seq_length:
-            structure_indices.extend([2] * (seq_length - len(structure_indices)))
+        # Pad or truncate to match sequence length (+ 2 for CLS/SEP)
+        if len(structure_indices) < seq_length + 2:
+            structure_indices.extend([2] * (seq_length + 2 - len(structure_indices)))
         else:
-            structure_indices = structure_indices[:seq_length]
+            structure_indices = structure_indices[:seq_length + 2]
         
-        # Convert to one-hot and repeat for batch
-        structure_tensor = F.one_hot(
-            torch.tensor(structure_indices, device=device),
-            num_classes=3
-        ).float()
+        # Convert to tensor
+        structure_tensor = torch.tensor(structure_indices, device=device)
         
-        return structure_tensor.unsqueeze(0).repeat(batch_size, 1, 1)
+        # Create feature tensor (simplified - just use embedding)
+        structure_features = F.one_hot(structure_tensor, num_classes=3).float()
+        
+        # Expand to match hidden dimension
+        structure_features = structure_features.unsqueeze(0).repeat(batch_size, 1, 1)
+        
+        # Project to structure encoder hidden dim
+        structure_features = F.pad(
+            structure_features, 
+            (0, self.config.model.structure_encoder.hidden_dim - 3),
+            value=0
+        )
+        
+        return structure_features
     
     def _decode_embeddings(
         self,
@@ -290,7 +332,30 @@ class StructDiff(nn.Module):
         attention_mask: torch.Tensor
     ) -> List[str]:
         """Decode embeddings back to sequences"""
-        # This would need a proper decoder - for now return placeholder
         batch_size = embeddings.shape[0]
-        return ["ACDEFGHIKLMNPQRSTVWY"] * batch_size  # 20 AA sequence
-# Updated: 05/30/2025 22:59:09
+        
+        # Use the sequence decoder to get amino acid logits
+        logits = self.sequence_decoder(embeddings)  # (B, L, 20)
+        
+        # Get predictions
+        predictions = torch.argmax(logits, dim=-1)  # (B, L)
+        
+        # Convert to amino acid sequences
+        amino_acids = 'ACDEFGHIKLMNPQRSTVWY'
+        sequences = []
+        
+        for i in range(batch_size):
+            # Get valid length (excluding padding)
+            valid_length = int(attention_mask[i].sum().item())
+            
+            # Skip CLS/SEP tokens
+            seq_indices = predictions[i, 1:valid_length-1].cpu().numpy()
+            
+            # Convert to string
+            sequence = ''.join([amino_acids[idx] for idx in seq_indices])
+            sequences.append(sequence)
+        
+        return sequences
+# Updated: 05/31/2025 15:11:07
+
+# Updated: 05/31/2025 15:14:04

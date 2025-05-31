@@ -797,7 +797,7 @@ class CustomStructDiff(StructDiff):
   
     def __init__(self, config):
         super().__init__(config)
-      
+    
         # 替换注意力层
         self.cross_attention = CustomAttention(
             hidden_dim=config.model.hidden_dim,
@@ -828,10 +828,10 @@ class PeptideDesignPipeline(YourPipeline):
             num_samples=1000,
             conditions=target_properties
         )
-      
+    
         # 应用你的筛选标准
         filtered = self.apply_filters(candidates)
-      
+    
         # 进行下游分析
         return self.analyze_candidates(filtered)
 ```
@@ -938,6 +938,7 @@ print(prof.key_averages().table(sort_by="cuda_time_total"))
 # Updated: 05/31/2025 15:11:07
 
 # Updated: 05/31/2025 15:14:04
-#   F o r c e   u p d a t e :   0 5 / 3 1 / 2 0 2 5   1 5 : 1 4 : 2 0 
- 
- 
+
+#� �F�o�r�c�e� �u�p�d�a�t�e�:� �0�5�/�3�1�/�2�0�2�5� �1�5�:�1�4�:�2�0�
+�
+�

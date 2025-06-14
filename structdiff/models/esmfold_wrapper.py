@@ -181,27 +181,49 @@ class ESMFoldWrapper(nn.Module):
     ) -> Dict[str, torch.Tensor]:
         """Extract structure features from ESMFold output"""
         try:
-            # Extract positions (N, CA, C atoms)
-            positions = output['positions']  # (seq_len, n_atoms, 3)
+            # ESMFold的输出通常包含多个回收周期的结果，我们需要最后一个周期的最终预测。
+            # 原始形状可能是 (num_recycles, batch, seq_len, n_atoms, 3)
+            # 我们选择最后一个回收周期 ([-1]) 并移除批次维度 ([0])
             
-            # Extract pLDDT scores (confidence)
-            plddt = output['plddt']  # (seq_len,)
+            # 提取并清理 positions
+            # 原始形状: (num_recycles, 1, seq_len, 37, 3)
+            positions = output['positions'][-1].squeeze(0)  # -> (seq_len, 37, 3)
+            
+            # 提取并清理 pLDDT
+            # 原始形状: (num_recycles, 1, seq_len) -> plddt
+            # 还有一个 per-atom 的 plddt: (num_recycles, 1, seq_len, 37) -> ptms
+            plddt = output['plddt'][-1].squeeze(0) # -> (seq_len,)
             
             # 确保所有张量在正确设备上
             positions = positions.to(self.device)
             plddt = plddt.to(self.device)
             
             seq_len = positions.shape[0]
+            n_atoms = positions.shape[1] if len(positions.shape) > 1 else 1
+            
+            logger.debug(f"ESMFold output shapes - positions: {positions.shape}, plddt: {plddt.shape}")
+            
+            # 安全地提取CA原子位置
+            if n_atoms > 1:
+                ca_positions = positions[:, 1]  # CA atoms (index 1)
+            else:
+                # 如果只有一个原子，使用第一个原子作为CA
+                ca_positions = positions[:, 0] if len(positions.shape) > 1 else positions
+                logger.warning(f"Only {n_atoms} atoms available, using first atom as CA")
             
             # Compute distance matrix (CA-CA distances)
-            ca_positions = positions[:, 1]  # CA atoms
             distance_matrix = self._compute_distance_matrix(ca_positions)
             
             # Compute contact map (contacts < 8Å)
             contact_map = (distance_matrix < 8.0).float()
             
             # Compute proper dihedral angles instead of using raw coordinates
-            angles = self._compute_dihedral_angles(positions)  # (seq_len, 4) - phi, psi, omega, chi1
+            if n_atoms >= 3:  # 需要至少N, CA, C三个原子
+                angles = self._compute_dihedral_angles(positions)  # (seq_len, 4) - phi, psi, omega, chi1
+            else:
+                # 如果原子数不足，创建虚拟角度
+                angles = torch.zeros(seq_len, 4, device=self.device)
+                logger.warning(f"Insufficient atoms ({n_atoms}) for dihedral calculation, using dummy angles")
             
             # Pad angles to expected 10 dimensions
             angles_padded = torch.zeros(seq_len, 10, device=self.device)
@@ -223,34 +245,50 @@ class ESMFoldWrapper(nn.Module):
             
         except Exception as e:
             logger.warning(f"Error extracting features: {e}")
+            import traceback
+            logger.debug(f"Full traceback: {traceback.format_exc()}")
             return self._create_dummy_features(sequence)
     
     def _compute_dihedral_angles(self, positions: torch.Tensor) -> torch.Tensor:
         """计算蛋白质骨架二面角"""
         seq_len = positions.shape[0]
+        n_atoms = positions.shape[1] if len(positions.shape) > 1 else 1
         angles = torch.zeros(seq_len, 4, device=self.device)  # phi, psi, omega, chi1
         
         try:
+            # 检查是否有足够的原子
+            if n_atoms < 3:
+                logger.warning(f"Insufficient atoms ({n_atoms}) for backbone dihedral calculation")
+                return angles
+            
             # Extract backbone atoms (N, CA, C)
             N = positions[:, 0]   # N atoms
             CA = positions[:, 1]  # CA atoms  
             C = positions[:, 2]   # C atoms
             
             for i in range(1, seq_len - 1):
-                # Phi angle: C(i-1) - N(i) - CA(i) - C(i)
-                if i > 0:
-                    phi = self._dihedral_angle(C[i-1], N[i], CA[i], C[i])
-                    angles[i, 0] = phi
-                
-                # Psi angle: N(i) - CA(i) - C(i) - N(i+1)
-                if i < seq_len - 1:
-                    psi = self._dihedral_angle(N[i], CA[i], C[i], N[i+1])
-                    angles[i, 1] = psi
-                
-                # Omega angle: CA(i-1) - C(i-1) - N(i) - CA(i)  
-                if i > 0:
-                    omega = self._dihedral_angle(CA[i-1], C[i-1], N[i], CA[i])
-                    angles[i, 2] = omega
+                try:
+                    # Phi angle: C(i-1) - N(i) - CA(i) - C(i)
+                    if i > 0:
+                        phi = self._dihedral_angle(C[i-1], N[i], CA[i], C[i])
+                        if torch.isfinite(phi):
+                            angles[i, 0] = phi
+                    
+                    # Psi angle: N(i) - CA(i) - C(i) - N(i+1)
+                    if i < seq_len - 1:
+                        psi = self._dihedral_angle(N[i], CA[i], C[i], N[i+1])
+                        if torch.isfinite(psi):
+                            angles[i, 1] = psi
+                    
+                    # Omega angle: CA(i-1) - C(i-1) - N(i) - CA(i)  
+                    if i > 0:
+                        omega = self._dihedral_angle(CA[i-1], C[i-1], N[i], CA[i])
+                        if torch.isfinite(omega):
+                            angles[i, 2] = omega
+                            
+                except Exception as e:
+                    logger.debug(f"Error computing angle for residue {i}: {e}")
+                    continue
                     
             # 将角度归一化到 [-π, π] 并转换为 [-1, 1]
             angles = torch.tanh(angles)  # 平滑归一化
@@ -355,6 +393,22 @@ class ESMFoldWrapper(nn.Module):
             # Clean up
             if os.path.exists(pdb_path):
                 os.remove(pdb_path)
+    
+    def fold_sequence(self, sequence: str) -> Dict:
+        """
+        为PeptideEvaluator提供的接口方法
+        """
+        if not self.available:
+            return None
+        
+        try:
+            result = self.predict_structure(sequence)
+            return {
+                'plddt': result.get('plddt', torch.zeros(len(sequence), device=self.device))
+            }
+        except Exception as e:
+            logger.warning(f"序列折叠失败: {e}")
+            return None
     
     def _write_pdb(
         self, 

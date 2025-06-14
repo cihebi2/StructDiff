@@ -1,0 +1,213 @@
+# 专用于多肽生成的ESMFold训练配置
+experiment:
+  name: "peptide_esmfold_generation"
+  project: "StructDiff-Peptide"
+  seed: 42
+  output_dir: "./outputs"
+  checkpoint_dir: "./checkpoints"
+  log_dir: "./logs"
+
+model:
+  type: "StructDiff"
+  
+  # 序列编码器配置
+  sequence_encoder:
+    pretrained_model: "facebook/esm2_t6_8M_UR50D"
+    freeze_encoder: false
+    use_lora: true
+    lora_rank: 16
+    lora_alpha: 32
+    lora_dropout: 0.1
+  
+  # 结构编码器配置 - 启用ESMFold
+  structure_encoder:
+    type: "multi_scale"
+    hidden_dim: 320
+    use_esmfold: true  # 启用ESMFold
+    esmfold_config:
+      model_name: "facebook/esmfold_v1"
+      chunk_size: 128
+      use_fp16: true
+      cache_results: true
+    local:
+      hidden_dim: 320
+      num_layers: 4
+      kernel_sizes: [3, 5, 7, 9]
+      dropout: 0.1
+    global:
+      hidden_dim: 512
+      num_attention_heads: 8
+      num_layers: 6
+      dropout: 0.1
+    fusion:
+      method: "attention"
+      hidden_dim: 320
+  
+  # 去噪器配置 - 大幅减少参数
+  denoiser:
+    hidden_dim: 256  # 从768减少到256
+    num_layers: 6    # 从12减少到6
+    num_heads: 8     # 从12减少到8
+    dropout: 0.1
+    use_cross_attention: true
+    use_rotary_embeddings: true
+
+# 数据配置 - 使用你的数据集
+data:
+  train_path: "./data/processed/train.csv"
+  val_path: "./data/processed/val.csv"
+  test_path: "./data/processed/test.csv"
+  structure_cache_dir: "./data/processed/structure_cache"
+  
+  # 结构预测配置
+  use_predicted_structures: true  # 启用结构预测
+  structure_prediction:
+    method: "esmfold"
+    cache_predictions: true
+    batch_size: 8  # ESMFold批处理大小
+  
+  # 数据处理参数
+  max_length: 50  # 根据你的数据统计设置
+  min_length: 5
+  target_columns:
+    sequence: "sequence"
+    label: "label"  # 0:抗菌, 1:抗真菌, 2:抗病毒
+    weight: "weight"
+    annotation: "annotation"
+  
+  # 数据增强
+  augmentation:
+    enable: true
+    noise_level: 0.1
+    mask_prob: 0.15
+    structure_noise: 0.05
+  
+  # 数据加载器 - 进一步优化内存
+  batch_size: 8   # 进一步减小批量大小
+  num_workers: 1  # 减少工作进程
+  pin_memory: false  # 禁用pin_memory节省内存
+  prefetch_factor: 1
+
+# 训练配置
+training:
+  num_epochs: 50  # 适中的训练轮数
+  gradient_accumulation_steps: 4  # 增加梯度累积补偿小批量
+  gradient_clip: 1.0
+  
+  # 优化器配置
+  optimizer:
+    type: "AdamW"
+    lr: 5e-5  # 略微降低学习率
+    betas: [0.9, 0.999]
+    weight_decay: 0.01
+    eps: 1e-8
+  
+  # 学习率调度器
+  scheduler:
+    type: "cosine"
+    num_warmup_steps: 500
+    min_lr: 1e-6
+  
+  # 混合精度训练
+  use_amp: true
+  amp_dtype: "float16"
+  
+  # 指数移动平均
+  use_ema: true
+  ema_decay: 0.9999
+  ema_update_every: 5
+  
+  # 检查点和验证
+  save_every: 500
+  validate_every: 1  # 每个epoch验证一次
+  log_every: 50
+  max_checkpoints: 5
+  
+  # 早停配置
+  early_stopping:
+    enabled: true
+    patience: 8
+    metric: "val_loss"
+    mode: "min"
+    min_delta: 0.001
+
+# 扩散过程配置
+diffusion:
+  num_timesteps: 1000
+  noise_schedule: "cosine"  # 使用余弦噪声调度
+  beta_start: 0.0001
+  beta_end: 0.02
+  
+  # 采样配置
+  sampling_method: "ddpm"
+  ddim_steps: 100
+  
+  # 损失配置
+  loss_type: "mse"
+  prediction_type: "epsilon"  # 预测噪声
+  
+  # 条件配置
+  conditioning:
+    peptide_type: true  # 基于肽类型的条件生成
+    structure_guidance: true  # 结构引导
+    classifier_free_guidance: true
+    guidance_scale: 1.5
+
+# 损失权重配置
+loss_weights:
+  diffusion_loss: 1.0
+  structure_consistency_loss: 0.2  # 增加结构一致性权重
+  classification_loss: 0.1  # 分类损失权重
+  auxiliary_loss: 0.05
+
+# 评估配置
+evaluation:
+  metrics:
+    - "perplexity"
+    - "accuracy" 
+    - "structure_consistency"
+    - "diversity"
+    - "peptide_properties"
+  
+  generation:
+    num_samples: 200
+    guidance_scale: 1.5
+    temperature: 1.0
+    top_p: 0.9
+
+# Weights & Biases配置
+wandb:
+  enabled: true  # 重新启用
+  project: "StructDiff-Peptide-ESMFold"
+  entity: null
+  tags: ["peptide", "esmfold", "diffusion", "antimicrobial", "antifungal", "antiviral"]
+  notes: "多肽生成训练 - 启用ESMFold结构预测"
+
+# 日志配置
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  save_every: 100
+  log_every: 50
+
+# 系统配置
+system:
+  cuda_visible_devices: "0"  # 指定GPU
+  mixed_precision: true
+  deterministic: true
+  benchmark: false  # 禁用cudnn benchmark以确保reproducibility
+
+# 特殊配置
+special:
+  # ESMFold相关内存管理
+  esmfold_memory_management:
+    clear_cache_every: 100  # 每100步清理一次缓存
+    max_cache_size: 1000    # 最大缓存条目数
+    enable_gradient_checkpointing: true
+  
+  # 多肽特异性配置
+  peptide_specific:
+    enable_secondary_structure_loss: true
+    enable_functional_classification: true
+    class_names: ["antimicrobial", "antifungal", "antiviral"]
+    class_weights: [1.0, 1.2, 1.5]  # 根据数据分布调整权重 

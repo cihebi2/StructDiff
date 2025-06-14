@@ -179,8 +179,17 @@ class StructDiff(nn.Module):
                 attention_mask=attention_mask,
                 return_dict=True
             )
-            seq_embeddings = seq_outputs.last_hidden_state  # (B, L, D_seq)
+            seq_embeddings = seq_outputs.last_hidden_state  # (B, L_padded+2, D_seq)
         
+        #
+        # CRITICAL FIX: Trim CLS and SEP tokens from sequence embeddings and attention mask
+        # to match the length of structure features.
+        #
+        # 序列嵌入和注意力掩码的长度将从 (L_max+2) 修正为 (L_max)，
+        # 与结构特征的长度完全对齐。
+        seq_embeddings = seq_embeddings[:, 1:-1, :]
+        attention_mask_trimmed = attention_mask[:, 1:-1].contiguous()
+
         # Add positional encoding
         seq_embeddings = self.positional_encoding(seq_embeddings)
         
@@ -198,13 +207,14 @@ class StructDiff(nn.Module):
         structure_features = None
         if structures is not None:
             structure_features = self.structure_encoder(
-                structures, attention_mask
-            )  # (B, L, D_struct)
+                structures,
+                attention_mask=attention_mask_trimmed  # Use the trimmed mask
+            )
         
         # Optional: Apply cross-modal attention
         if self.cross_modal_attention is not None and structure_features is not None:
             seq_features, struct_features, _ = self.cross_modal_attention(
-                noisy_embeddings, structure_features, attention_mask
+                noisy_embeddings, structure_features, attention_mask_trimmed
             )
             noisy_embeddings = seq_features
             structure_features = struct_features
@@ -213,7 +223,7 @@ class StructDiff(nn.Module):
         denoised_embeddings, cross_attention_weights = self.denoiser(
             noisy_embeddings=noisy_embeddings,
             timesteps=timesteps,
-            attention_mask=attention_mask,
+            attention_mask=attention_mask_trimmed, # Use the trimmed mask
             structure_features=structure_features,
             conditions=conditions
         )
@@ -231,7 +241,7 @@ class StructDiff(nn.Module):
                 noise=noise,
                 noisy_embeddings=noisy_embeddings,
                 structure_features=structure_features,
-                attention_mask=attention_mask
+                attention_mask=attention_mask_trimmed
             )
             outputs.update(losses)
         

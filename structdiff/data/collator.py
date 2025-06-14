@@ -23,16 +23,19 @@ class PeptideStructureCollator:
             Collated batch dictionary
         """
         # Find max length in batch
-        max_len = max(item['sequences'].shape[0] for item in batch)
+        max_seq_len = max(item['sequences'].shape[0] for item in batch)
         
+        # 结构特征的长度应该比序列短2 (没有CLS/SEP标记)
+        max_struct_len = max_seq_len - 2
+
         # Initialize tensors
         batch_size = len(batch)
         sequences = torch.full(
-            (batch_size, max_len), 
+            (batch_size, max_seq_len), 
             self.pad_token_id, 
             dtype=torch.long
         )
-        attention_mask = torch.zeros(batch_size, max_len, dtype=torch.long)
+        attention_mask = torch.zeros(batch_size, max_seq_len, dtype=torch.bool)
         labels = []
         
         # Structure placeholders
@@ -46,11 +49,11 @@ class PeptideStructureCollator:
             
             # 确保attention_mask的处理正确
             if 'attention_mask' in item:
-                mask_len = min(item['attention_mask'].shape[0], max_len)
-                attention_mask[i, :mask_len] = item['attention_mask'][:mask_len]
+                mask_len = min(item['attention_mask'].shape[0], max_seq_len)
+                attention_mask[i, :mask_len] = item['attention_mask'][:mask_len].bool()
             else:
                 # 如果没有attention_mask，创建一个
-                attention_mask[i, :seq_len] = 1
+                attention_mask[i, :seq_len] = True
             
             if 'label' in item:
                 labels.append(item['label'])
@@ -68,6 +71,10 @@ class PeptideStructureCollator:
             'attention_mask': attention_mask,
         }
         
+        # 注意：这里创建的 attention_mask 是后续所有操作（包括结构特征）的唯一真实性来源。
+        # 由于所有结构特征都与序列长度对齐并被填充到相同长度，
+        # 这个掩码同样适用于它们，以确保模型在注意力计算中忽略填充部分。
+
         if labels:
             # 确保labels可以正确堆叠
             try:
@@ -83,7 +90,7 @@ class PeptideStructureCollator:
         # Pad and stack structure features
         if structures:
             collated['structures'] = self._collate_structures(
-                structures, max_len
+                structures, max_struct_len
             )
         
         # Add conditions if present
@@ -102,146 +109,70 @@ class PeptideStructureCollator:
         """Collate structure features with padding"""
         collated_structures = {}
         
+        # 将所有张量移动到同一设备，以避免pad_sequence出错
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
         for key, values in structures.items():
-            if not values:  # 跳过空列表
+            if not values:
                 continue
+
+            try:
+                # 预处理：确保所有张量都在同一设备上，并且是Tensor类型
+                processed_values = []
+                for v in values:
+                    if not isinstance(v, torch.Tensor):
+                        v = torch.tensor(v)
+                    processed_values.append(v.to(device))
                 
-            # 确保所有张量在同一设备上
-            device = values[0].device if hasattr(values[0], 'device') else torch.device('cpu')
-            
-            if key == 'distance_matrix' or key == 'contact_map':
-                # Handle 2D matrices - need to pad both dimensions
-                padded = []
-                for matrix in values:
-                    # 确保在正确设备上
-                    if hasattr(matrix, 'to'):
-                        matrix = matrix.to(device)
+                # 特殊处理2D矩阵（如距离矩阵）
+                if 'matrix' in key or 'map' in key:
+                    padded = []
+                    for matrix in processed_values:
+                        # 截断或填充到 (max_len, max_len)
+                        current_len = matrix.shape[0]
+                        if current_len > max_len:
+                            matrix = matrix[:max_len, :max_len]
+                        elif current_len < max_len:
+                            pad_size = max_len - current_len
+                            matrix = F.pad(matrix, (0, pad_size, 0, pad_size), value=0)
+                        padded.append(matrix)
                     
-                    current_len = matrix.shape[0]
-                    if current_len > max_len:
-                        # 如果太大，截断
-                        matrix = matrix[:max_len, :max_len]
-                    elif current_len < max_len:
-                        # 如果太小，填充
-                        pad_size = max_len - current_len
-                        matrix = F.pad(
-                            matrix, 
-                            (0, pad_size, 0, pad_size), 
-                            value=0
-                        )
-                    
-                    # 确保最终尺寸正确
-                    if matrix.shape[0] != max_len or matrix.shape[1] != max_len:
-                        new_matrix = torch.zeros(max_len, max_len, device=device, dtype=matrix.dtype)
-                        min_size = min(matrix.shape[0], max_len)
-                        new_matrix[:min_size, :min_size] = matrix[:min_size, :min_size]
-                        matrix = new_matrix
-                        
-                    padded.append(matrix)
-                
-                try:
                     collated_structures[key] = torch.stack(padded)
-                except Exception as e:
-                    print(f"Error stacking {key}: {e}")
-                    # 创建零张量作为后备
-                    dtype = values[0].dtype if len(values) > 0 else torch.float32
-                    collated_structures[key] = torch.zeros(len(values), max_len, max_len, device=device, dtype=dtype)
-                    
-            elif key == 'positions':
-                # Handle 3D position data (seq_len, n_atoms, 3)
-                padded = []
-                for positions in values:
-                    # 确保在正确设备上
-                    if hasattr(positions, 'to'):
-                        positions = positions.to(device)
-                    
-                    current_len = positions.shape[0]
-                    if current_len > max_len:
-                        # 截断到max_len
-                        positions = positions[:max_len]
-                    elif current_len < max_len:
-                        # 填充序列长度维度
-                        pad_size = max_len - current_len
-                        positions = F.pad(
-                            positions, 
-                            (0, 0, 0, 0, 0, pad_size), 
-                            value=0
-                        )
-                    
-                    # 确保最终形状正确
-                    if positions.shape[0] != max_len:
-                        n_atoms, n_dims = positions.shape[1], positions.shape[2]
-                        new_positions = torch.zeros(max_len, n_atoms, n_dims, device=device, dtype=positions.dtype)
-                        copy_len = min(positions.shape[0], max_len)
-                        new_positions[:copy_len] = positions[:copy_len]
-                        positions = new_positions
-                        
-                    padded.append(positions)
-                
-                try:
-                    collated_structures[key] = torch.stack(padded)
-                except Exception as e:
-                    print(f"Error stacking {key}: {e}")
-                    # 创建零张量作为后备
-                    n_atoms = values[0].shape[1] if len(values) > 0 and len(values[0].shape) > 1 else 37
-                    dtype = values[0].dtype if len(values) > 0 else torch.float32
-                    collated_structures[key] = torch.zeros(len(values), max_len, n_atoms, 3, device=device, dtype=dtype)
-                    
-            else:
-                # Handle 1D and 2D features (plddt, angles, secondary_structure, etc.)
-                padded = []
-                for feat in values:
-                    # 确保在正确设备上
-                    if hasattr(feat, 'to'):
-                        feat = feat.to(device)
-                    
-                    current_len = feat.shape[0]
-                    if current_len > max_len:
-                        # 截断
-                        feat = feat[:max_len]
-                    elif current_len < max_len:
-                        # 填充
-                        pad_size = max_len - current_len
-                        if feat.dim() == 1:
-                            # 1D features like plddt, secondary_structure
-                            feat = F.pad(feat, (0, pad_size), value=0)
-                        elif feat.dim() == 2:
-                            # 2D features like angles (seq_len, n_angles)
-                            feat = F.pad(feat, (0, 0, 0, pad_size), value=0)
-                        else:
-                            # Higher dimensional features
-                            padding = [0, 0] * (feat.dim() - 1) + [0, pad_size]
-                            feat = F.pad(feat, padding, value=0)
-                    
-                    # 确保最终长度正确
-                    if feat.shape[0] != max_len:
-                        if feat.dim() == 1:
-                            new_feat = torch.zeros(max_len, device=device, dtype=feat.dtype)
-                            copy_len = min(feat.shape[0], max_len)
-                            new_feat[:copy_len] = feat[:copy_len]
-                            feat = new_feat
-                        elif feat.dim() == 2:
-                            new_feat = torch.zeros(max_len, feat.shape[1], device=device, dtype=feat.dtype)
-                            copy_len = min(feat.shape[0], max_len)
-                            new_feat[:copy_len] = feat[:copy_len]
-                            feat = new_feat
-                    
-                    padded.append(feat)
-                
-                try:
-                    collated_structures[key] = torch.stack(padded)
-                except Exception as e:
-                    print(f"Error stacking {key}: {e}")
-                    # 创建零张量作为后备
-                    if values and len(values) > 0:
-                        sample_feat = values[0]
-                        dtype = sample_feat.dtype if hasattr(sample_feat, 'dtype') else torch.float32
-                        if sample_feat.dim() == 1:
-                            collated_structures[key] = torch.zeros(len(values), max_len, device=device, dtype=dtype)
-                        elif sample_feat.dim() == 2:
-                            collated_structures[key] = torch.zeros(len(values), max_len, sample_feat.shape[1], device=device, dtype=dtype)
-        
+
+                # 使用 pad_sequence 处理其他所有可变长度的序列
+                else:
+                    # 对于plddt这种可能出现异常维度的，先进行squeeze()
+                    if key == 'plddt':
+                        # 假设 plddt 应该是 (seq_len, ) 或 (seq_len, 1)
+                        # 我们移除多余的维度
+                        processed_values = [v.squeeze() for v in processed_values]
+
+                    # pad_sequence 需要一个 tensor 列表
+                    # batch_first=True -> 输出形状为 (batch_size, max_len, ...)
+                    padded_tensors = torch.nn.utils.rnn.pad_sequence(
+                        processed_values, 
+                        batch_first=True, 
+                        padding_value=0.0
+                    )
+                    collated_structures[key] = padded_tensors
+
+            except Exception as e:
+                print(f"Error collating '{key}': {e}")
+                # 提供一个更详细的错误，帮助调试
+                for i, v in enumerate(values):
+                    if isinstance(v, torch.Tensor):
+                        print(f"  - Tensor {i} shape: {v.shape}, dtype: {v.dtype}, device: {v.device}")
+                    else:
+                        print(f"  - Item {i} is not a tensor: {type(v)}")
+                # 创建一个占位符以允许训练继续
+                collated_structures[key] = torch.zeros(len(values), max_len, device=device)
+
         return collated_structures
+    
+    def _get_max_dims(self, tensors: List[torch.Tensor]) -> List[int]:
+        # ... existing code ...
+        pass
+
 # Updated: 05/31/2025 15:11:07
 
 # Updated: 05/31/2025 15:14:04

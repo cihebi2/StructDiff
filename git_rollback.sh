@@ -45,18 +45,21 @@ list_versions() {
     
     # 列出所有标签，按版本排序
     git tag -l "v*" | sort -V | while read tag; do
-        tag_commit=$(git rev-parse "$tag^{}")
-        tag_date=$(git log -1 --format="%ci" "$tag")
-        tag_message=$(git tag -l --format='%(contents:subject)' "$tag")
-        
-        if [[ "$tag_commit" == "$current_commit" ]]; then
-            echo -e "${GREEN}→ $tag${NC} (当前版本)"
-        else
-            echo -e "  $tag"
+        if [[ -n "$tag" ]]; then
+            tag_commit=$(git rev-parse "$tag^{}" 2>/dev/null || git rev-parse "$tag")
+            tag_date=$(git log -1 --format="%ci" "$tag" 2>/dev/null || echo "未知时间")
+            # 兼容老版本git的标签信息获取
+            tag_message=$(git cat-file -p "$tag" 2>/dev/null | tail -n +6 | head -1 || echo "版本发布")
+            
+            if [[ "$tag_commit" == "$current_commit" ]]; then
+                echo -e "${GREEN}→ $tag${NC} (当前版本)"
+            else
+                echo -e "  $tag"
+            fi
+            echo -e "    时间: ${YELLOW}$tag_date${NC}"
+            echo -e "    说明: $tag_message"
+            echo ""
         fi
-        echo -e "    时间: ${YELLOW}$tag_date${NC}"
-        echo -e "    说明: $tag_message"
-        echo ""
     done
 }
 
@@ -64,7 +67,7 @@ list_versions() {
 show_current() {
     current_tag=$(git describe --tags --exact-match HEAD 2>/dev/null || echo "未标记")
     current_commit=$(git rev-parse --short HEAD)
-    current_branch=$(git branch --show-current)
+    current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
     
     echo -e "${BLUE}=== 当前状态 ===${NC}"
     echo -e "版本标签: ${GREEN}$current_tag${NC}"
@@ -98,8 +101,8 @@ rollback_to_version() {
     
     # 显示版本详情
     if git tag -l | grep -q "^$version$"; then
-        tag_date=$(git log -1 --format="%ci" "$version")
-        tag_message=$(git tag -l --format='%(contents:subject)' "$version")
+        tag_date=$(git log -1 --format="%ci" "$version" 2>/dev/null || echo "未知时间")
+        tag_message=$(git cat-file -p "$version" 2>/dev/null | tail -n +6 | head -1 || echo "版本发布")
         echo -e "版本时间: $tag_date"
         echo -e "版本说明: $tag_message"
     fi

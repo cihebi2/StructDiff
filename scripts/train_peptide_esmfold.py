@@ -99,10 +99,19 @@ def parse_args():
     return parser.parse_args()
 
 
-def setup_environment(args):
+def setup_environment(args, config):
     """设置环境和设备"""
-    # 设置GPU
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
+    # 优先使用配置文件中的GPU设置，然后是命令行参数
+    if hasattr(config, 'system') and hasattr(config.system, 'cuda_visible_devices'):
+        gpu_id = config.system.cuda_visible_devices
+        logger.info(f"从配置文件读取GPU设置: {gpu_id}")
+    else:
+        gpu_id = str(args.gpu)
+        logger.info(f"使用命令行GPU参数: {gpu_id}")
+    
+    # 设置GPU环境变量
+    os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
+    logger.info(f"设置 CUDA_VISIBLE_DEVICES={gpu_id}")
     
     # 应用ESMFold补丁
     logger.info("应用ESMFold兼容性补丁...")
@@ -114,10 +123,15 @@ def setup_environment(args):
     logger.info(f"使用设备: {device}")
     
     if torch.cuda.is_available():
-        gpu_props = torch.cuda.get_device_properties(0)
-        logger.info(f"GPU: {gpu_props.name}")
+        actual_gpu_id = torch.cuda.current_device()
+        gpu_props = torch.cuda.get_device_properties(actual_gpu_id)
+        logger.info(f"实际使用GPU {actual_gpu_id}: {gpu_props.name}")
         logger.info(f"GPU内存: {gpu_props.total_memory / 1e9:.1f}GB")
-        logger.info(f"可用内存: {torch.cuda.memory_reserved(0) / 1e9:.1f}GB")
+        
+        # 清理显存
+        torch.cuda.empty_cache()
+        logger.info(f"当前内存使用: {torch.cuda.memory_allocated() / 1e9:.1f}GB")
+        logger.info(f"可用内存: {(gpu_props.total_memory - torch.cuda.memory_allocated()) / 1e9:.1f}GB")
     
     return device
 
@@ -260,26 +274,49 @@ def setup_model_and_training(config: Dict, device: torch.device, shared_esmfold)
         
         logger.info(f"模型参数量: {sum(p.numel() for p in model.parameters()):,}")
         
-        # 创建优化器 - 排除ESMFold参数
+        # 创建优化器 - 只排除ESMFold参数，保留其他所有参数
         trainable_params = []
         esmfold_params = 0
         total_params = 0
+        sequence_encoder_params = 0
+        other_params = 0
         
         for name, param in model.named_parameters():
             total_params += param.numel()
-            # 排除ESMFold相关参数
-            if any(esmfold_key in name for esmfold_key in [
-                'structure_encoder.esmfold', 
-                'structure_encoder._esmfold',
-                'esmfold'
-            ]):
+            
+            # 只排除真正的ESMFold模型参数，保留其他所有参数
+            if ('structure_encoder.esmfold.' in name or 
+                'structure_encoder._esmfold.' in name or
+                name.startswith('esmfold.')):
                 esmfold_params += param.numel()
-                param.requires_grad = False  # 确保ESMFold参数不需要梯度
+                param.requires_grad = False  # 冻结ESMFold参数
+                logger.debug(f"冻结ESMFold参数: {name}")
             else:
                 trainable_params.append(param)
+                if 'sequence_encoder' in name:
+                    sequence_encoder_params += param.numel()
+                else:
+                    other_params += param.numel()
         
-        logger.info(f"总参数: {total_params:,}, ESMFold参数: {esmfold_params:,}, 可训练参数: {len(trainable_params):,}")
-        logger.info(f"ESMFold参数已被排除在训练之外")
+        trainable_param_count = sum(p.numel() for p in trainable_params)
+        
+        logger.info(f"参数统计:")
+        logger.info(f"  总参数: {total_params:,}")
+        logger.info(f"  ESMFold参数(冻结): {esmfold_params:,}")
+        logger.info(f"  序列编码器参数: {sequence_encoder_params:,}")
+        logger.info(f"  其他可训练参数: {other_params:,}")
+        logger.info(f"  可训练参数总计: {trainable_param_count:,}")
+        
+        if trainable_param_count < 1000000:  # 少于100万参数
+            logger.warning(f"⚠️ 可训练参数过少 ({trainable_param_count:,})，可能影响训练效果")
+            
+            # 打印前10个可训练参数的名称
+            logger.info("可训练参数示例:")
+            for i, (name, param) in enumerate(model.named_parameters()):
+                if param.requires_grad:
+                    logger.info(f"  {name}: {param.shape}")
+                    if i >= 9:  # 只显示前10个
+                        break
         
         optimizer = torch.optim.AdamW(
             trainable_params,  # 只优化非ESMFold参数
@@ -367,7 +404,7 @@ def train_step(
     model, batch, optimizer, scaler, config, device, 
     gradient_accumulation_steps, step
 ):
-    """单步训练"""
+    """单步训练 - 修复版本"""
     try:
         # 移动数据到设备 - 使用更强鲁棒的函数
         batch = move_to_device(batch, device)
@@ -376,6 +413,52 @@ def train_step(
         if 'sequences' not in batch or 'attention_mask' not in batch:
             logger.warning(f"Batch missing required fields")
             return None, float('inf')
+        
+        # 检查张量形状一致性
+        seq_shape = batch['sequences'].shape
+        mask_shape = batch['attention_mask'].shape
+        
+        if seq_shape != mask_shape:
+            logger.warning(f"Shape mismatch: sequences {seq_shape} vs attention_mask {mask_shape}")
+            # 修正attention_mask的形状
+            if mask_shape[1] != seq_shape[1]:
+                min_len = min(mask_shape[1], seq_shape[1])
+                batch['sequences'] = batch['sequences'][:, :min_len]
+                batch['attention_mask'] = batch['attention_mask'][:, :min_len]
+                logger.info(f"Adjusted shapes to: {batch['sequences'].shape}")
+        
+        # 检查结构数据的形状一致性
+        if 'structures' in batch and batch['structures'] is not None:
+            expected_struct_len = batch['sequences'].shape[1] - 2  # 除去CLS/SEP
+            
+            for key, value in batch['structures'].items():
+                if value is None:
+                    continue
+                    
+                # 对于结构特征，第二个维度应该与序列长度-2匹配
+                if len(value.shape) >= 2:
+                    actual_len = value.shape[1]
+                    if actual_len != expected_struct_len:
+                        logger.warning(f"Structure '{key}' length mismatch: {actual_len} vs expected {expected_struct_len}")
+                        
+                        # 截断或填充结构特征
+                        if actual_len > expected_struct_len:
+                            if len(value.shape) == 2:
+                                batch['structures'][key] = value[:, :expected_struct_len]
+                            elif len(value.shape) == 3:
+                                if 'matrix' in key or 'map' in key:
+                                    batch['structures'][key] = value[:, :expected_struct_len, :expected_struct_len]
+                                else:
+                                    batch['structures'][key] = value[:, :expected_struct_len, :]
+                        elif actual_len < expected_struct_len:
+                            pad_size = expected_struct_len - actual_len
+                            if len(value.shape) == 2:
+                                batch['structures'][key] = F.pad(value, (0, pad_size), value=0)
+                            elif len(value.shape) == 3:
+                                if 'matrix' in key or 'map' in key:
+                                    batch['structures'][key] = F.pad(value, (0, pad_size, 0, pad_size), value=0)
+                                else:
+                                    batch['structures'][key] = F.pad(value, (0, 0, 0, pad_size), value=0)
         
         # 采样时间步
         batch_size = batch['sequences'].shape[0]
@@ -405,7 +488,23 @@ def train_step(
                 return_loss=True
             )
         
+        # 检查是否有损失
+        if 'total_loss' not in outputs:
+            logger.warning("Model output missing 'total_loss', checking for alternatives...")
+            if 'diffusion_loss' in outputs:
+                outputs['total_loss'] = outputs['diffusion_loss']
+            elif 'loss' in outputs:
+                outputs['total_loss'] = outputs['loss']
+            else:
+                logger.error("No loss found in model outputs")
+                return None, float('inf')
+        
         loss = outputs['total_loss'] / gradient_accumulation_steps
+        
+        # 检查损失是否为NaN
+        if torch.isnan(loss) or torch.isinf(loss):
+            logger.warning(f"Invalid loss detected: {loss}")
+            return None, float('inf')
         
         # 反向传播
         if config.training.use_amp:
@@ -417,6 +516,8 @@ def train_step(
         
     except Exception as e:
         logger.error(f"训练步骤失败: {e}")
+        import traceback
+        logger.error(f"详细错误信息: {traceback.format_exc()}")
         return None, float('inf')
 
 
@@ -1510,7 +1611,7 @@ def main():
         logger.info("Debug模式：调整检查点保存频率以平衡速度和安全性")
     
     # 设置环境
-    device = setup_environment(args)
+    device = setup_environment(args, config)
     
     # 创建输出目录
     output_dir = Path(config.experiment.output_dir) / config.experiment.name

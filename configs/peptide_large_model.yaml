@@ -1,0 +1,302 @@
+# 大型多肽生成模型配置 - 增加模型容量
+experiment:
+  name: "peptide_large_esmfold"
+  project: "StructDiff-Peptide-Large"
+  seed: 42
+  output_dir: "./outputs"
+  checkpoint_dir: "./checkpoints"
+  log_dir: "./logs"
+
+model:
+  type: "StructDiff"
+  
+  # 序列编码器配置 - 使用更大的ESM模型
+  sequence_encoder:
+    pretrained_model: "facebook/esm2_t12_35M_UR50D"  # 升级到35M参数的ESM2模型
+    freeze_encoder: false  # 解冻编码器进行微调
+    use_lora: true  # 启用LoRA减少显存占用
+    lora_rank: 32  # 增加LoRA rank
+    lora_alpha: 64  # 增加alpha
+    lora_dropout: 0.1
+    # 额外的微调层
+    additional_layers:
+      - type: "linear"
+        input_dim: 480  # ESM2-35M的hidden_dim
+        output_dim: 512
+        dropout: 0.1
+      - type: "layer_norm"
+        dim: 512
+  
+  # 结构编码器配置 - 大幅增强
+  structure_encoder:
+    type: "multi_scale"
+    hidden_dim: 512  # 从320增加到512
+    use_esmfold: true
+    esmfold_config:
+      model_name: "facebook/esmfold_v1"
+      chunk_size: 64  # 减小chunk_size以适应更大模型
+      use_fp16: true
+      cache_results: true
+    
+    # 残基级编码器
+    residue_encoder:
+      hidden_dim: 512
+      num_layers: 4
+      dropout: 0.1
+      activation: "gelu"
+    
+    # 二级结构编码器
+    secondary_structure_encoder:
+      hidden_dim: 512
+      embedding_dim: 64
+      lstm_layers: 2
+      bidirectional: true
+      dropout: 0.1
+    
+    # 拓扑编码器 - 增强
+    topology_encoder:
+      hidden_dim: 512
+      conv_channels: [64, 128, 256, 512]  # 增加通道数
+      kernel_sizes: [3, 5, 7]
+      dropout: 0.1
+      use_attention: true
+      attention_heads: 8
+    
+    # 全局特征融合
+    fusion:
+      method: "multi_head_attention"
+      hidden_dim: 512
+      num_heads: 16  # 增加注意力头数
+      num_layers: 4  # 增加层数
+      dropout: 0.1
+      use_residual: true
+      use_layer_norm: true
+  
+  # 去噪器配置 - 大幅增强
+  denoiser:
+    type: "structure_aware_transformer"
+    hidden_dim: 768  # 增加到768
+    num_layers: 12  # 增加到12层
+    num_heads: 16   # 增加注意力头数
+    intermediate_dim: 3072  # 4倍hidden_dim
+    dropout: 0.1
+    attention_dropout: 0.1
+    use_cross_attention: true
+    cross_attention_layers: [3, 6, 9]  # 在特定层使用交叉注意力
+    use_rotary_embeddings: true
+    use_gradient_checkpointing: true  # 启用梯度检查点节省内存
+    
+    # 条件注入配置
+    conditioning:
+      peptide_type_dim: 64
+      injection_layers: [2, 4, 6, 8, 10]  # 多层注入条件信息
+      fusion_method: "film"  # Feature-wise Linear Modulation
+    
+    # 结构感知模块
+    structure_aware:
+      use_structure_bias: true
+      structure_attention_heads: 8
+      structure_guidance_weight: 0.3
+
+  # 序列解码器 - 新增
+  sequence_decoder:
+    type: "autoregressive"
+    hidden_dim: 768
+    vocab_size: 21  # 20个氨基酸 + 1个特殊token
+    num_layers: 6
+    num_heads: 12
+    dropout: 0.1
+    use_tied_embeddings: true
+
+# 数据配置
+data:
+  train_path: "./data/processed/train.csv"
+  val_path: "./data/processed/val.csv"
+  test_path: "./data/processed/test.csv"
+  structure_cache_dir: "./data/processed/structure_cache"
+  
+  # 结构预测配置
+  use_predicted_structures: true
+  structure_prediction:
+    method: "esmfold"
+    cache_predictions: true
+    batch_size: 4  # 减小ESMFold批处理大小
+    max_length: 50
+    include_confidence: true
+    include_contacts: true
+  
+  # 数据处理参数
+  max_length: 50
+  min_length: 5
+  target_columns:
+    sequence: "sequence"
+    label: "label"
+    weight: "weight"
+    annotation: "annotation"
+  
+  # 数据增强 - 增强
+  augmentation:
+    enable: true
+    # 序列增强
+    noise_level: 0.05     # 随机噪声级别
+    mask_prob: 0.1        # 随机mask概率
+    sequence_noise: 0.05  # 随机替换氨基酸
+    sequence_mask: 0.1    # 随机mask氨基酸
+    # 结构增强
+    structure_noise: 0.1  # 结构坐标噪声
+    angle_perturbation: 0.2  # 角度扰动
+    # 混合增强
+    mixup_alpha: 0.2      # Mixup数据增强
+    cutmix_alpha: 0.3     # CutMix数据增强
+  
+  # 数据加载器
+  batch_size: 6   # 适中的批量大小，考虑更大模型
+  num_workers: 0  # 避免多进程问题
+  pin_memory: false
+  prefetch_factor: 1
+
+# 训练配置 - 优化大模型训练
+training:
+  num_epochs: 100  # 增加训练轮数
+  gradient_accumulation_steps: 8  # 增加梯度累积
+  gradient_clip: 1.0
+  
+  # 优化器配置 - 针对大模型优化
+  optimizer:
+    type: "AdamW"
+    lr: 3e-5  # 降低学习率
+    betas: [0.9, 0.95]  # 调整beta2
+    weight_decay: 0.05  # 增加权重衰减
+    eps: 1e-8
+  
+  # 学习率调度器 - 更复杂的调度
+  scheduler:
+    type: "cosine_with_warmup"
+    num_warmup_steps: 1000  # 增加预热步数
+    num_training_steps: 10000  # 总训练步数
+    min_lr: 1e-7
+    warmup_type: "linear"
+  
+  # 混合精度训练
+  use_amp: true
+  amp_dtype: "float16"
+  
+  # 指数移动平均
+  use_ema: true
+  ema_decay: 0.9999
+  ema_update_every: 1
+  
+  # 检查点和验证
+  save_every: 50  # 更频繁保存
+  validate_every: 1
+  log_every: 20
+  max_checkpoints: 10
+  
+  # 早停配置
+  early_stopping:
+    enabled: true
+    patience: 15  # 增加耐心值
+    metric: "val_loss"
+    mode: "min"
+    min_delta: 0.0001
+
+# 扩散过程配置 - 优化
+diffusion:
+  num_timesteps: 1000
+  noise_schedule: "cosine"
+  beta_start: 0.0001
+  beta_end: 0.02
+  
+  # 采样配置
+  sampling_method: "ddpm"
+  ddim_steps: 100
+  
+  # 损失配置
+  loss_type: "mse"
+  prediction_type: "epsilon"
+  
+  # 条件配置 - 增强
+  conditioning:
+    peptide_type: true
+    structure_guidance: true
+    classifier_free_guidance: true
+    guidance_scale: 2.0  # 增加引导强度
+    unconditional_probability: 0.1  # 无条件训练概率
+
+# 损失权重配置 - 平衡各项损失
+loss_weights:
+  diffusion_loss: 1.0
+  structure_consistency_loss: 0.5  # 增加结构一致性权重
+  reconstruction_loss: 0.3         # 重建损失
+  classification_loss: 0.2         # 分类损失
+  diversity_loss: 0.1              # 多样性损失
+  perplexity_loss: 0.1             # 困惑度损失
+
+# 评估配置
+evaluation:
+  metrics:
+    - "perplexity"
+    - "accuracy"
+    - "structure_consistency"
+    - "diversity"
+    - "novelty"
+    - "validity"
+    - "uniqueness"
+    - "peptide_properties"
+    - "functional_activity"
+  
+  generation:
+    num_samples: 500  # 增加生成样本数
+    guidance_scale: 2.0
+    temperature: 1.0
+    top_p: 0.9
+    do_sample: true
+
+# Weights & Biases配置
+wandb:
+  enabled: true
+  project: "StructDiff-Large-Peptide"
+  entity: null
+  tags: ["large-model", "peptide", "esmfold", "diffusion", "structure-aware"]
+  notes: "大型多肽生成模型 - 增强结构感知能力"
+
+# 日志配置
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  save_every: 50
+  log_every: 20
+
+# 系统配置
+system:
+  cuda_visible_devices: "2"
+  mixed_precision: true
+  deterministic: true
+  benchmark: false
+
+# 特殊配置
+special:
+  # 内存优化
+  memory_optimization:
+    gradient_checkpointing: true
+    use_cpu_offload: false  # 如果显存不足可启用
+    clear_cache_every: 50
+    max_cache_size: 500
+  
+  # 大模型特定优化
+  large_model_optimizations:
+    use_zero_optimizer: false  # DeepSpeed ZeRO优化器（如果需要）
+    activation_checkpointing: true
+    sequence_parallel: false
+    pipeline_parallel: false
+  
+  # 多肽生成特定配置
+  peptide_generation:
+    enable_length_control: true
+    enable_property_control: true
+    enable_motif_preservation: true
+    target_properties:
+      - "antimicrobial_activity"
+      - "stability"
+      - "solubility"
+      - "low_toxicity"

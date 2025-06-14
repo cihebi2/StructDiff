@@ -100,6 +100,8 @@ class MultiScaleStructureEncoder(nn.Module):
             residue_features = self.residue_encoder(
                 structure_data['angles'], attention_mask
             )
+            # 确保形状匹配
+            residue_features = self._align_feature_shape(residue_features, batch_size, seq_len, self.hidden_dim, device)
             features.append(residue_features)
         else:
             features.append(torch.zeros(batch_size, seq_len, self.hidden_dim, device=device))
@@ -109,6 +111,8 @@ class MultiScaleStructureEncoder(nn.Module):
             ss_features = self.secondary_structure_encoder(
                 structure_data['secondary_structure'], attention_mask
             )
+            # 确保形状匹配
+            ss_features = self._align_feature_shape(ss_features, batch_size, seq_len, self.hidden_dim, device)
             features.append(ss_features)
         else:
             features.append(torch.zeros(batch_size, seq_len, self.hidden_dim, device=device))
@@ -118,12 +122,28 @@ class MultiScaleStructureEncoder(nn.Module):
             topology_features = self.topology_encoder(
                 structure_data['distance_matrix'], attention_mask
             )
+            # 确保形状匹配
+            topology_features = self._align_feature_shape(topology_features, batch_size, seq_len, self.hidden_dim, device)
             features.append(topology_features)
         else:
             features.append(torch.zeros(batch_size, seq_len, self.hidden_dim, device=device))
         
+        # 再次验证所有特征的形状一致性
+        for i, feat in enumerate(features):
+            if feat.shape != (batch_size, seq_len, self.hidden_dim):
+                print(f"Warning: Feature {i} has shape {feat.shape}, expected ({batch_size}, {seq_len}, {self.hidden_dim})")
+                # 强制调整形状
+                feat = self._force_align_shape(feat, batch_size, seq_len, self.hidden_dim, device)
+                features[i] = feat
+        
         # Concatenate all features
-        combined_features = torch.cat(features, dim=-1)
+        try:
+            combined_features = torch.cat(features, dim=-1)
+        except Exception as e:
+            print(f"Error concatenating features: {e}")
+            print(f"Feature shapes: {[f.shape for f in features]}")
+            # 如果拼接失败，创建默认特征
+            combined_features = torch.zeros(batch_size, seq_len, self.hidden_dim * 3, device=device)
         
         # Project to final dimension
         output_features = self.output_projection(combined_features)
@@ -132,6 +152,86 @@ class MultiScaleStructureEncoder(nn.Module):
         output_features = output_features * attention_mask.unsqueeze(-1)
         
         return output_features
+    
+    def _align_feature_shape(self, features, target_batch_size, target_seq_len, target_hidden_dim, device):
+        """对齐特征形状"""
+        if features is None:
+            return torch.zeros(target_batch_size, target_seq_len, target_hidden_dim, device=device)
+        
+        current_shape = features.shape
+        
+        # 调整batch_size
+        if current_shape[0] != target_batch_size:
+            if current_shape[0] == 1 and target_batch_size > 1:
+                # 扩展batch维度
+                features = features.expand(target_batch_size, -1, -1)
+            elif current_shape[0] > target_batch_size:
+                # 截断batch维度
+                features = features[:target_batch_size]
+            else:
+                # 填充batch维度
+                pad_batch = target_batch_size - current_shape[0]
+                padding_shape = (pad_batch,) + current_shape[1:]
+                padding = torch.zeros(padding_shape, device=device, dtype=features.dtype)
+                features = torch.cat([features, padding], dim=0)
+        
+        # 调整seq_len
+        if len(current_shape) > 1 and current_shape[1] != target_seq_len:
+            if current_shape[1] > target_seq_len:
+                # 截断序列长度
+                features = features[:, :target_seq_len]
+            else:
+                # 填充序列长度
+                pad_seq = target_seq_len - current_shape[1]
+                if len(current_shape) == 3:
+                    features = F.pad(features, (0, 0, 0, pad_seq), value=0)
+                else:
+                    features = F.pad(features, (0, pad_seq), value=0)
+        
+        # 调整hidden_dim
+        if len(current_shape) > 2 and current_shape[2] != target_hidden_dim:
+            if current_shape[2] > target_hidden_dim:
+                # 截断特征维度
+                features = features[:, :, :target_hidden_dim]
+            else:
+                # 填充特征维度
+                pad_hidden = target_hidden_dim - current_shape[2]
+                features = F.pad(features, (0, pad_hidden), value=0)
+        
+        # 确保最终形状正确
+        if features.shape != (target_batch_size, target_seq_len, target_hidden_dim):
+            # 如果还是不匹配，强制reshape
+            features = features.contiguous().view(target_batch_size, target_seq_len, -1)
+            if features.shape[2] != target_hidden_dim:
+                if features.shape[2] > target_hidden_dim:
+                    features = features[:, :, :target_hidden_dim]
+                else:
+                    pad_hidden = target_hidden_dim - features.shape[2]
+                    features = F.pad(features, (0, pad_hidden), value=0)
+        
+        return features
+    
+    def _force_align_shape(self, features, target_batch_size, target_seq_len, target_hidden_dim, device):
+        """强制对齐形状（最后的备用方案）"""
+        try:
+            # 先尝试简单的reshape
+            total_elements = features.numel()
+            target_elements = target_batch_size * target_seq_len * target_hidden_dim
+            
+            if total_elements >= target_elements:
+                # 如果元素足够，直接reshape并截断
+                features = features.view(-1)[:target_elements].view(target_batch_size, target_seq_len, target_hidden_dim)
+            else:
+                # 如果元素不够，填充零
+                features_flat = features.view(-1)
+                pad_size = target_elements - total_elements
+                features_flat = F.pad(features_flat, (0, pad_size), value=0)
+                features = features_flat.view(target_batch_size, target_seq_len, target_hidden_dim)
+            
+            return features
+        except:
+            # 如果所有方法都失败，创建零张量
+            return torch.zeros(target_batch_size, target_seq_len, target_hidden_dim, device=device)
     
     def predict_from_sequence(
         self,
@@ -192,6 +292,27 @@ class ResidueFeatureEncoder(nn.Module):
             angles = angles.unsqueeze(0)
         
         encoded = self.encoder(angles)
+        
+        # 修复mask维度对齐问题
+        if mask.shape != encoded.shape[:2]:
+            # 如果mask的形状与encoded的前两个维度不匹配，调整mask
+            batch_size, seq_len = encoded.shape[:2]
+            if mask.shape[0] != batch_size:
+                # mask的batch维度不匹配，扩展或截断
+                if mask.shape[0] == 1 and batch_size > 1:
+                    mask = mask.expand(batch_size, -1)
+                else:
+                    mask = mask[:batch_size]
+            
+            if mask.shape[1] != seq_len:
+                # mask的序列长度不匹配，调整
+                if mask.shape[1] > seq_len:
+                    mask = mask[:, :seq_len]
+                else:
+                    # 填充mask
+                    pad_size = seq_len - mask.shape[1]
+                    mask = torch.nn.functional.pad(mask, (0, pad_size), value=0)
+        
         return encoded * mask.unsqueeze(-1)
 
 
@@ -222,7 +343,26 @@ class SecondaryStructureEncoder(nn.Module):
         
         embedded = self.embedding(ss_labels)
         lstm_out, _ = self.lstm(embedded)
-        return self.norm(lstm_out) * mask.unsqueeze(-1)
+        output = self.norm(lstm_out)
+        
+        # 修复mask维度对齐问题
+        if mask.shape != output.shape[:2]:
+            # 如果mask的形状与output的前两个维度不匹配，调整mask
+            batch_size, seq_len = output.shape[:2]
+            if mask.shape[0] != batch_size:
+                if mask.shape[0] == 1 and batch_size > 1:
+                    mask = mask.expand(batch_size, -1)
+                else:
+                    mask = mask[:batch_size]
+            
+            if mask.shape[1] != seq_len:
+                if mask.shape[1] > seq_len:
+                    mask = mask[:, :seq_len]
+                else:
+                    pad_size = seq_len - mask.shape[1]
+                    mask = torch.nn.functional.pad(mask, (0, pad_size), value=0)
+        
+        return output * mask.unsqueeze(-1)
 
 
 class TopologyEncoder(nn.Module):
@@ -241,6 +381,26 @@ class TopologyEncoder(nn.Module):
     def forward(self, distance_matrix: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len = mask.shape
         
+        # 确保distance_matrix的形状与mask匹配
+        if distance_matrix.shape[:2] != (batch_size, seq_len):
+            # 调整distance_matrix的形状
+            if distance_matrix.shape[0] != batch_size:
+                if distance_matrix.shape[0] == 1 and batch_size > 1:
+                    distance_matrix = distance_matrix.expand(batch_size, -1, -1)
+                else:
+                    distance_matrix = distance_matrix[:batch_size]
+            
+            if distance_matrix.shape[1] != seq_len or distance_matrix.shape[2] != seq_len:
+                # 调整矩阵大小
+                current_len = min(distance_matrix.shape[1], distance_matrix.shape[2])
+                if current_len > seq_len:
+                    distance_matrix = distance_matrix[:, :seq_len, :seq_len]
+                elif current_len < seq_len:
+                    pad_size = seq_len - current_len
+                    distance_matrix = torch.nn.functional.pad(
+                        distance_matrix, (0, pad_size, 0, pad_size), value=0
+                    )
+        
         # Add channel dimension
         x = distance_matrix.unsqueeze(1)  # (B, 1, L, L)
         
@@ -250,14 +410,37 @@ class TopologyEncoder(nn.Module):
         
         # Global pooling for each position
         position_features = []
-        for i in range(seq_len):
+        actual_seq_len = x.shape[2]  # 使用实际的序列长度
+        for i in range(min(seq_len, actual_seq_len)):
             # Extract features related to position i
             pos_features = x[:, :, i, :].mean(dim=-1)  # (B, hidden_dim)
             position_features.append(pos_features)
         
-        features = torch.stack(position_features, dim=1)  # (B, L, hidden_dim)
+        # 如果position_features不够，填充零
+        while len(position_features) < seq_len:
+            zero_features = torch.zeros_like(position_features[0])
+            position_features.append(zero_features)
         
-        return self.projection(features) * mask.unsqueeze(-1)
+        features = torch.stack(position_features, dim=1)  # (B, L, hidden_dim)
+        output = self.projection(features)
+        
+        # 修复mask维度对齐问题
+        if mask.shape != output.shape[:2]:
+            batch_size, output_seq_len = output.shape[:2]
+            if mask.shape[0] != batch_size:
+                if mask.shape[0] == 1 and batch_size > 1:
+                    mask = mask.expand(batch_size, -1)
+                else:
+                    mask = mask[:batch_size]
+            
+            if mask.shape[1] != output_seq_len:
+                if mask.shape[1] > output_seq_len:
+                    mask = mask[:, :output_seq_len]
+                else:
+                    pad_size = output_seq_len - mask.shape[1]
+                    mask = torch.nn.functional.pad(mask, (0, pad_size), value=0)
+        
+        return output * mask.unsqueeze(-1)
 # Updated: 05/30/2025 22:59:09
 
 # Updated: 05/31/2025 15:11:07

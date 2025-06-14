@@ -81,8 +81,11 @@ class GaussianDiffusion:
         
         # Move parameters to same device
         device = x_start.device
-        sqrt_alphas_cumprod_t = self.sqrt_alphas_cumprod[t].to(device)
-        sqrt_one_minus_alphas_cumprod_t = self.sqrt_one_minus_alphas_cumprod[t].to(device)
+        
+        # Move t to CPU for indexing, then move result to target device
+        t_cpu = t.cpu()
+        sqrt_alphas_cumprod_t = self.sqrt_alphas_cumprod[t_cpu].to(device)
+        sqrt_one_minus_alphas_cumprod_t = self.sqrt_one_minus_alphas_cumprod[t_cpu].to(device)
         
         # Expand dimensions for broadcasting
         while len(sqrt_alphas_cumprod_t.shape) < len(x_start.shape):
@@ -105,7 +108,10 @@ class GaussianDiffusion:
             noise = torch.randn_like(x_start)
         
         noisy_data = self.q_sample(x_start, timesteps, noise)
-        noise_level = self.sqrt_one_minus_alphas_cumprod[timesteps].to(x_start.device)
+        
+        # Fix device mismatch for indexing
+        timesteps_cpu = timesteps.cpu()
+        noise_level = self.sqrt_one_minus_alphas_cumprod[timesteps_cpu].to(x_start.device)
         
         return noisy_data, noise_level
     
@@ -120,12 +126,15 @@ class GaussianDiffusion:
         """
         device = x_start.device
         
+        # Fix device mismatch for indexing
+        t_cpu = t.cpu()
+        
         posterior_mean = (
-            self.posterior_mean_coef1[t].to(device).unsqueeze(-1).unsqueeze(-1) * x_start +
-            self.posterior_mean_coef2[t].to(device).unsqueeze(-1).unsqueeze(-1) * x_t
+            self.posterior_mean_coef1[t_cpu].to(device).unsqueeze(-1).unsqueeze(-1) * x_start +
+            self.posterior_mean_coef2[t_cpu].to(device).unsqueeze(-1).unsqueeze(-1) * x_t
         )
-        posterior_variance = self.posterior_variance[t].to(device).unsqueeze(-1).unsqueeze(-1)
-        posterior_log_variance_clipped = self.posterior_log_variance_clipped[t].to(device).unsqueeze(-1).unsqueeze(-1)
+        posterior_variance = self.posterior_variance[t_cpu].to(device).unsqueeze(-1).unsqueeze(-1)
+        posterior_log_variance_clipped = self.posterior_log_variance_clipped[t_cpu].to(device).unsqueeze(-1).unsqueeze(-1)
         
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
     

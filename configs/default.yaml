@@ -147,10 +147,4 @@ logging:
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   save_every: 100  # Save logs every N steps
   log_every: 100   # Log metrics every N steps
-# Updated: 05/31/2025 15:11:07
 
-# Updated: 05/31/2025 15:14:04
-
-# Updated: 05/31/2025 23:30:00
-
-# Updated: 05/31/2025 23:30:18

@@ -34,10 +34,13 @@ class MultiHeadSelfAttention(nn.Module):
         
         # Apply mask
         if attention_mask is not None:
-            scores = scores.masked_fill(
-                ~attention_mask.unsqueeze(1).unsqueeze(2), 
-                float('-inf')
-            )
+            # Convert attention_mask to boolean if it's not already
+            if attention_mask.dtype != torch.bool:
+                attention_mask = attention_mask.bool()
+            
+            # Create mask for invalid positions (where attention_mask is False)
+            mask = ~attention_mask.unsqueeze(1).unsqueeze(2)
+            scores = scores.masked_fill(mask, float('-inf'))
         
         # Attention weights
         attn_weights = F.softmax(scores, dim=-1)

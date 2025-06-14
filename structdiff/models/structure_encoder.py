@@ -59,12 +59,17 @@ class MultiScaleStructureEncoder(nn.Module):
     def _init_esmfold(self):
         """Initialize ESMFold for structure prediction"""
         try:
-            import esm
-            self.esmfold = esm.pretrained.esmfold_v1()
-            self.esmfold.eval()
-            for param in self.esmfold.parameters():
-                param.requires_grad = False
-            logger.info("Initialized ESMFold for structure prediction")
+            # 使用修复的 ESMFoldWrapper 而不是直接使用 ESM
+            from .esmfold_wrapper import ESMFoldWrapper
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            self.esmfold = ESMFoldWrapper(device=device)
+            
+            if self.esmfold.available:
+                logger.info("Initialized ESMFoldWrapper for structure prediction")
+            else:
+                logger.warning("ESMFoldWrapper not available")
+                self.esmfold = None
+                
         except Exception as e:
             logger.warning(f"Could not initialize ESMFold: {e}")
             self.esmfold = None
@@ -150,14 +155,42 @@ class ResidueFeatureEncoder(nn.Module):
     
     def __init__(self, input_dim: int, hidden_dim: int):
         super().__init__()
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim)
-        )
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        # 创建一个动态的线性层，将在forward中初始化
+        self.encoder = None
+        
+    def _init_encoder(self, actual_input_dim: int):
+        """动态初始化编码器以匹配实际输入维度"""
+        if self.encoder is None or self.encoder[0].in_features != actual_input_dim:
+            self.encoder = nn.Sequential(
+                nn.Linear(actual_input_dim, self.hidden_dim),
+                nn.ReLU(),
+                nn.Linear(self.hidden_dim, self.hidden_dim),
+                nn.LayerNorm(self.hidden_dim)
+            )
+            # 将编码器移动到正确的设备
+            if hasattr(self, '_device'):
+                self.encoder = self.encoder.to(self._device)
     
     def forward(self, angles: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        # 记录设备信息
+        self._device = angles.device
+        
+        # 动态获取实际输入维度
+        actual_input_dim = angles.shape[-1]
+        
+        # 初始化或重新初始化编码器
+        self._init_encoder(actual_input_dim)
+        
+        # 将编码器移动到正确的设备
+        self.encoder = self.encoder.to(angles.device)
+        
+        # 确保输入张量的形状正确
+        if angles.dim() == 2:
+            # 如果只有2维，添加批次维度
+            angles = angles.unsqueeze(0)
+        
         encoded = self.encoder(angles)
         return encoded * mask.unsqueeze(-1)
 
@@ -167,7 +200,10 @@ class SecondaryStructureEncoder(nn.Module):
     
     def __init__(self, input_dim: int, hidden_dim: int):
         super().__init__()
-        self.embedding = nn.Embedding(input_dim, hidden_dim)
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        # 初始化一个较大的嵌入层来容纳更多的类别
+        self.embedding = nn.Embedding(max(input_dim, 8), hidden_dim)  # 至少8个类别
         self.lstm = nn.LSTM(
             hidden_dim, hidden_dim // 2,
             bidirectional=True, batch_first=True
@@ -175,6 +211,15 @@ class SecondaryStructureEncoder(nn.Module):
         self.norm = nn.LayerNorm(hidden_dim)
     
     def forward(self, ss_labels: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        # 确保标签在有效范围内
+        max_label = self.embedding.num_embeddings - 1
+        ss_labels = torch.clamp(ss_labels, 0, max_label)
+        
+        # 确保输入张量的形状正确
+        if ss_labels.dim() == 1:
+            # 如果只有1维，添加批次维度
+            ss_labels = ss_labels.unsqueeze(0)
+        
         embedded = self.embedding(ss_labels)
         lstm_out, _ = self.lstm(embedded)
         return self.norm(lstm_out) * mask.unsqueeze(-1)

@@ -192,14 +192,18 @@ def predict_missing_structures(
     batch_size: int = 8
 ) -> Dict[str, Dict]:
     """Predict structures for sequences without PDB files"""
-    # Import ESMFold
+    # Import ESMFoldWrapper
     try:
-        import esm
-        model = esm.pretrained.esmfold_v1().eval()
-        if torch.cuda.is_available():
-            model = model.cuda()
+        from structdiff.models.esmfold_wrapper import ESMFoldWrapper
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        wrapper = ESMFoldWrapper(device=device)
+        
+        if not wrapper.available:
+            logger.error("ESMFoldWrapper not available")
+            return structures
+            
     except ImportError:
-        logger.error("ESMFold not available. Install with: pip install fair-esm")
+        logger.error("ESMFoldWrapper not available. Check installation.")
         return structures
     
     # Find sequences without structures
@@ -216,10 +220,7 @@ def predict_missing_structures(
         
         for seq_data in batch:
             try:
-                features = predict_structure_with_esmfold(
-                    seq_data['sequence'],
-                    model
-                )
+                features = wrapper.predict_structure(seq_data['sequence'])
                 structures[seq_data['id']] = features
             except Exception as e:
                 logger.warning(f"Failed to predict structure for {seq_data['id']}: {e}")

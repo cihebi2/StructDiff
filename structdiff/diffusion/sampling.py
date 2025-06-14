@@ -28,7 +28,10 @@ class BaseSampler(ABC):
 
 
 class DDPMSampler(BaseSampler):
-    """Denoising Diffusion Probabilistic Models sampler"""
+    """
+    Standard DDPM sampler (slowest but highest quality)
+    Uses full denoising chain
+    """
     
     def sample(
         self,
@@ -40,19 +43,17 @@ class DDPMSampler(BaseSampler):
         device: str = 'cuda',
         verbose: bool = True
     ) -> torch.Tensor:
-        """
-        Sample using DDPM reverse process
-        """
-        model.eval()
+        """Sample using DDPM (full denoising chain)"""
+        # 只对模型调用 eval()，对函数则跳过
+        if hasattr(model, 'eval'):
+            model.eval()
         
         # Start from pure noise
         x_t = torch.randn(shape, device=device) * temperature
         
-        # Reverse diffusion process
-        timesteps = list(range(self.diffusion.num_timesteps))[::-1]
-        
+        timesteps = reversed(range(0, self.diffusion.num_timesteps))
         if verbose:
-            timesteps = tqdm(timesteps, desc="DDPM Sampling")
+            timesteps = tqdm(list(timesteps), desc="DDPM Sampling")
         
         with torch.no_grad():
             for t in timesteps:
@@ -61,22 +62,20 @@ class DDPMSampler(BaseSampler):
                 # Get model prediction
                 if guidance_scale > 1.0 and conditions is not None:
                     # Classifier-free guidance
-                    # Run model twice: with and without conditions
                     model_output_cond = model(x_t, t_batch, conditions)
                     model_output_uncond = model(x_t, t_batch, None)
                     
-                    # Combine predictions
                     model_output = model_output_uncond + guidance_scale * (
                         model_output_cond - model_output_uncond
                     )
                 else:
                     model_output = model(x_t, t_batch, conditions)
                 
-                # Denoise step
+                # DDPM step using the diffusion model's p_sample method
                 x_t = self.diffusion.p_sample(
-                    model_output,
-                    x_t,
-                    t_batch,
+                    model_output=model_output,
+                    x_t=x_t,
+                    t=t_batch,
                     clip_denoised=True
                 )
         
@@ -115,13 +114,10 @@ class DDIMSampler(BaseSampler):
         device: str = 'cuda',
         verbose: bool = True
     ) -> torch.Tensor:
-        """
-        Sample using DDIM
-        
-        Args:
-            eta: Controls stochasticity (0=deterministic, 1=DDPM)
-        """
-        model.eval()
+        """Sample using DDIM"""
+        # 只对模型调用 eval()，对函数则跳过
+        if hasattr(model, 'eval'):
+            model.eval()
         
         # Start from pure noise
         x_t = torch.randn(shape, device=device) * temperature
@@ -136,7 +132,6 @@ class DDIMSampler(BaseSampler):
                 
                 # Get model prediction
                 if guidance_scale > 1.0 and conditions is not None:
-                    # Classifier-free guidance
                     model_output_cond = model(x_t, t_batch, conditions)
                     model_output_uncond = model(x_t, t_batch, None)
                     
@@ -146,12 +141,13 @@ class DDIMSampler(BaseSampler):
                 else:
                     model_output = model(x_t, t_batch, conditions)
                 
-                # DDIM update
+                # DDIM step
+                t_prev = self.timesteps[i + 1] if i < len(self.timesteps) - 1 else 0
                 x_t = self._ddim_step(
                     model_output,
                     x_t,
                     t,
-                    self.timesteps[i + 1] if i < len(self.timesteps) - 1 else 0,
+                    t_prev,
                     eta,
                     device
                 )
@@ -231,7 +227,9 @@ class PNDMSampler(BaseSampler):
         verbose: bool = True
     ) -> torch.Tensor:
         """Sample using PNDM"""
-        model.eval()
+        # 只对模型调用 eval()，对函数则跳过
+        if hasattr(model, 'eval'):
+            model.eval()
         
         # Start from pure noise
         x_t = torch.randn(shape, device=device) * temperature
@@ -344,7 +342,13 @@ def get_sampler(
     if name not in samplers:
         raise ValueError(f"Unknown sampler: {name}")
     
-    return samplers[name](diffusion_model, **kwargs)
+    # 只为支持的采样器传递特定参数
+    if name == 'ddpm':
+        # DDPMSampler 不需要额外参数
+        return samplers[name](diffusion_model)
+    else:
+        # DDIM 和 PNDM 支持 num_inference_steps
+        return samplers[name](diffusion_model, **kwargs)
 # Updated: 05/30/2025 22:59:09
 
 # Updated: 05/31/2025 15:11:07

@@ -6,7 +6,6 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
-import esm
 
 from ..utils.logger import get_logger
 from .structure_utils import extract_structure_features, predict_structure_with_esmfold
@@ -24,58 +23,69 @@ class PeptideStructureDataset(Dataset):
         data_path: str,
         config: Dict,
         is_training: bool = True,
-        cache_dir: Optional[str] = None
+        cache_dir: Optional[str] = None,
+        shared_esmfold: Optional[object] = None  # 新增：接受外部ESMFold实例
     ):
         self.config = config
         self.is_training = is_training
         self.max_length = config.data.max_length
-        self.min_length = config.data.min_length
+        self.min_length = config.data.get('min_length', 8)
+        self.use_predicted_structures = config.data.get('use_predicted_structures', False)
+        self.cache_dir = cache_dir or f"./cache/{'train' if is_training else 'val'}"
         
-        # Load data
-        self.data = self._load_data(data_path)
+        # 外部ESMFold实例优先级最高
+        self.structure_predictor = shared_esmfold
         
         # Initialize tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
-            config.model.sequence_encoder.path
+            config.model.sequence_encoder.pretrained_model
         )
         
-        # Structure cache
-        self.cache_dir = cache_dir or os.path.join(
-            os.path.dirname(data_path), "structure_cache"
-        )
+        # Load data
+        logger.info(f"Loading dataset from {data_path}")
+        if data_path.endswith('.csv'):
+            self.data = pd.read_csv(data_path)
+        elif data_path.endswith('.json'):
+            self.data = pd.read_json(data_path)
+        else:
+            raise ValueError(f"Unsupported file format: {data_path}")
+        
+        # Initialize structure predictor only if not provided externally
+        if self.use_predicted_structures and self.structure_predictor is None:
+            logger.info("Initializing ESMFold for structure prediction...")
+            try:
+                from ..models.esmfold_wrapper import ESMFoldWrapper
+                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                self.structure_predictor = ESMFoldWrapper(device=device)
+                
+                if self.structure_predictor.available:
+                    logger.info("✓ ESMFold 模型加载完成")
+                else:
+                    logger.warning("❌ ESMFold 初始化失败")
+                    self.structure_predictor = None
+                    self.use_predicted_structures = False
+                    
+            except Exception as e:
+                logger.error(f"❌ ESMFold 初始化失败: {e}")
+                self.structure_predictor = None
+                self.use_predicted_structures = False
+        elif self.structure_predictor is not None:
+            logger.info("✓ 使用外部提供的 ESMFold 实例")
+        
+        # Setup cache
         os.makedirs(self.cache_dir, exist_ok=True)
         
-        # Initialize ESMFold if needed
-        self.use_predicted_structures = config.data.get('use_predicted_structures', True)
-        if self.use_predicted_structures:
-            self._init_structure_predictor()
+        # Filter sequences by length
+        self.data = self.data[
+            (self.data['sequence'].str.len() >= self.min_length) &
+            (self.data['sequence'].str.len() <= self.max_length)
+        ].reset_index(drop=True)
         
-        logger.info(f"Loaded {len(self.data)} peptide sequences")
-    
-    def _load_data(self, data_path: str) -> pd.DataFrame:
-        """Load peptide data from CSV file"""
-        df = pd.read_csv(data_path)
-        
-        # Filter by length
-        df = df[
-            (df['sequence'].str.len() >= self.min_length) &
-            (df['sequence'].str.len() <= self.max_length)
-        ]
-        
-        return df.reset_index(drop=True)
-    
-    def _init_structure_predictor(self):
-        """Initialize ESMFold for structure prediction"""
-        try:
-            self.structure_predictor = esm.pretrained.esmfold_v1()
-            self.structure_predictor.eval()
-            if torch.cuda.is_available():
-                self.structure_predictor = self.structure_predictor.cuda()
-            logger.info("Initialized ESMFold for structure prediction")
-        except Exception as e:
-            logger.warning(f"Could not initialize ESMFold: {e}")
-            self.structure_predictor = None
-            self.use_predicted_structures = False
+        logger.info(f"Dataset loaded: {len(self.data)} sequences")
+        if self.use_predicted_structures and self.structure_predictor:
+            logger.info("Structure prediction enabled")
+        else:
+            logger.info("Structure prediction disabled")
     
     def __len__(self) -> int:
         return len(self.data)
@@ -133,12 +143,11 @@ class PeptideStructureDataset(Dataset):
                 logger.warning(f"Could not load cached structure: {e}")
         
         # Predict structure if needed
-        if self.use_predicted_structures and self.structure_predictor is not None:
+        if (self.use_predicted_structures and 
+            self.structure_predictor is not None and 
+            self.structure_predictor.available):
             try:
-                structure_features = predict_structure_with_esmfold(
-                    sequence,
-                    self.structure_predictor
-                )
+                structure_features = self.structure_predictor.predict_structure(sequence)
                 
                 # Cache the results
                 with open(cache_path, 'wb') as f:

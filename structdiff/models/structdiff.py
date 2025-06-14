@@ -63,10 +63,11 @@ class StructDiff(nn.Module):
                 'auxiliary_loss': 0.01
             })()
         
-        # Add positional encoding
+        # Add positional encoding - account for special tokens (CLS, SEP)
+        max_seq_length = config.data.max_length + 2 if hasattr(config, 'data') else 514
         self.positional_encoding = PositionalEncoding(
             self.seq_hidden_dim,
-            max_length=config.data.max_length if hasattr(config, 'data') else 512
+            max_length=max_seq_length
         )
         
         # Add sequence decoder for generation
@@ -536,6 +537,3 @@ class StructDiff(nn.Module):
         }
         torch.save(checkpoint, save_path)
         logger.info(f"Model saved to {save_path}")
-# Updated: 05/31/2025 23:30:00
-
-# Updated: 05/31/2025 23:30:18

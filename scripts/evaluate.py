@@ -136,13 +136,15 @@ def evaluate_structures(
     if predict:
         logger.info("Predicting structures with ESMFold...")
         # Import structure prediction
-        from structdiff.data.structure_utils import predict_structure_with_esmfold
+        from structdiff.models.esmfold_wrapper import ESMFoldWrapper
         
-        # Initialize ESMFold
-        import esm
-        esmfold = esm.pretrained.esmfold_v1().eval()
-        if torch.cuda.is_available():
-            esmfold = esmfold.cuda()
+        # Initialize ESMFoldWrapper
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        wrapper = ESMFoldWrapper(device=device)
+        
+        if not wrapper.available:
+            logger.error("ESMFoldWrapper not available")
+            return {}
         
         # Predict structures in batches
         gen_structures = []
@@ -150,9 +152,7 @@ def evaluate_structures(
             batch = generated[i:i+batch_size]
             for peptide in batch:
                 try:
-                    structure = predict_structure_with_esmfold(
-                        peptide['sequence'], esmfold
-                    )
+                    structure = wrapper.predict_structure(peptide['sequence'])
                     gen_structures.append(structure)
                 except Exception as e:
                     logger.warning(f"Failed to predict structure: {e}")
@@ -167,9 +167,7 @@ def evaluate_structures(
         ref_structures = []
         for peptide in reference[:100]:  # Limit reference predictions
             try:
-                structure = predict_structure_with_esmfold(
-                    peptide['sequence'], esmfold
-                )
+                structure = wrapper.predict_structure(peptide['sequence'])
                 ref_structures.append(structure)
             except:
                 ref_structures.append(None)

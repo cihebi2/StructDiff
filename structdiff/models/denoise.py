@@ -7,6 +7,8 @@ from einops import rearrange
 from .cross_attention import CrossModalAttention
 from .layers.attention import MultiHeadSelfAttention
 from .layers.embeddings import TimestepEmbedding, ConditionEmbedding
+from .layers.mlp import FeedForward
+from .layers.alphafold3_embeddings import AF3TimestepEmbedding, AF3AdaptiveLayerNorm
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -33,8 +35,8 @@ class StructureAwareDenoiser(nn.Module):
         self.seq_input_proj = nn.Linear(seq_hidden_dim, self.hidden_dim)
         self.struct_input_proj = nn.Linear(struct_hidden_dim, self.hidden_dim)
         
-        # Timestep and condition embeddings
-        self.time_embedding = TimestepEmbedding(self.hidden_dim)
+        # Timestep and condition embeddings (AF3 style)
+        self.time_embedding = AF3TimestepEmbedding(self.hidden_dim)
         self.condition_embedding = ConditionEmbedding(
             num_classes=4,  # antimicrobial, antifungal, antiviral, unconditioned
             hidden_dim=self.hidden_dim,
@@ -144,15 +146,14 @@ class DenoisingBlock(nn.Module):
             )
             self.cross_attn_norm = nn.LayerNorm(hidden_dim)
         
-        # Feed-forward
-        self.ffn = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim * 4),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim * 4, hidden_dim),
-            nn.Dropout(dropout)
+        # Feed-forward with GLU (Gated Linear Unit)
+        self.ffn = FeedForward(
+            hidden_dim=hidden_dim,
+            intermediate_dim=hidden_dim * 4,
+            dropout=dropout,
+            activation="silu",  # SiLU/Swish activation like AF3
+            use_gate=True  # Enable GLU
         )
-        self.ffn_norm = nn.LayerNorm(hidden_dim)
         
     def forward(
         self,
@@ -175,10 +176,8 @@ class DenoisingBlock(nn.Module):
             )
             x = x_cross + residual
         
-        # Feed-forward
-        residual = x
-        x = self.ffn_norm(x)
-        x = self.ffn(x) + residual
+        # Feed-forward (GLU with built-in residual and norm)
+        x = self.ffn(x)
         
         return x, cross_attn_weights
 # Updated: 05/30/2025 22:59:09

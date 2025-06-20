@@ -134,7 +134,7 @@ training:
 # 扩散过程配置
 diffusion:
   num_timesteps: 1000
-  noise_schedule: "cosine"  # 使用余弦噪声调度
+  noise_schedule: "alphafold3"  # 使用AlphaFold3噪声调度
   beta_start: 0.0001
   beta_end: 0.02
   

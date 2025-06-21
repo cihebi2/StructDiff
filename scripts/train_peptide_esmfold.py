@@ -144,19 +144,48 @@ def setup_shared_esmfold(config: Dict, device: torch.device):
         config.data.get('use_predicted_structures', False)):
         
         logger.info("正在创建共享ESMFold实例...")
+        
+        # 更激进的内存清理，为ESMFold腾出空间
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            
+            # 强制垃圾回收
+            gc.collect()
+            
+            # 设置内存分配策略
+            os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True,max_split_size_mb:128'
+            
+            # 再次清理
+            torch.cuda.empty_cache()
+            
+            print(f"🧹 ESMFold初始化前GPU内存清理完成: {torch.cuda.memory_allocated()/1024**3:.2f}GB")
+        
         try:
+            # 首先尝试GPU
             shared_esmfold = ESMFoldWrapper(device=device)
             
             if shared_esmfold.available:
-                logger.info("✓ 共享ESMFold实例创建成功")
+                logger.info("✓ 共享ESMFold GPU实例创建成功")
                 logger.info(f"ESMFold内存使用: {torch.cuda.memory_allocated() / 1e9:.1f}GB")
             else:
-                logger.error("❌ ESMFold实例创建失败")
+                logger.error("❌ ESMFold GPU实例创建失败")
                 shared_esmfold = None
                 
-        except Exception as e:
-            logger.error(f"ESMFold实例创建失败: {e}")
-            shared_esmfold = None
+        except Exception as gpu_error:
+            logger.warning(f"⚠️ ESMFold GPU初始化失败: {gpu_error}")
+            
+            try:
+                # 尝试CPU fallback
+                logger.info("🔄 尝试使用CPU创建ESMFold...")
+                shared_esmfold = ESMFoldWrapper(device='cpu')
+                if shared_esmfold.available:
+                    logger.info("✅ ESMFold CPU实例创建成功")
+                else:
+                    shared_esmfold = None
+            except Exception as cpu_error:
+                logger.error(f"❌ ESMFold CPU初始化也失败: {cpu_error}")
+                shared_esmfold = None
     
     return shared_esmfold
 

@@ -77,6 +77,14 @@ memory_optimization:
   disable_esmfold_in_eval: true
   generation_batch_size: 4
   gradient_checkpointing: true
+  esmfold_memory_optimization:
+    enabled: true
+    max_batch_size: 4
+    use_cpu_fallback: true
+    aggressive_cleanup: true
+    memory_threshold_gb: 20.0
+    evaluation_only_cpu: false  # 根据需要改为true强制CPU
+    chunked_processing: true
 model:
   adaptive_conditioning:
     biological_initialization:

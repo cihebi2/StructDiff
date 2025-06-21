@@ -58,9 +58,9 @@ evaluation:
 experiment:
   checkpoint_dir: ./checkpoints
   log_dir: ./logs
-  name: peptide_esmfold_generation
+  name: peptide_adaptive_conditioning
   output_dir: ./outputs
-  project: StructDiff-Peptide
+  project: StructDiff-AdaptiveConditioning
   seed: 42
 logging:
   format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -89,6 +89,7 @@ model:
     enabled: true
     multi_aspect_control:
       charge_control: true
+      fine_grained_modulation: true
       functional_control: true
       hydrophobic_control: true
       structure_control: true

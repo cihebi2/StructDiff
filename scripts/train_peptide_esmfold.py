@@ -827,6 +827,12 @@ def generate_and_validate(config, device):
             instability = results.get('instability_index', {}).get('mean_instability', 0.0)
             if instability == 0.0:  # 备用键名
                 instability = results.get('instability_index', {}).get('mean', 0.0)
+                if instability == 0.0:  # 再次备用
+                    instability_data = results.get('instability_index', {})
+                    if isinstance(instability_data, dict) and 'mean_instability_index' in instability_data:
+                        instability = instability_data['mean_instability_index']
+            if instability == 0.0:  # 备用键名
+                instability = results.get('instability_index', {}).get('mean', 0.0)
             
             # 修复相似性得分的键名
             similarity = results.get('blosum62_similarity', {}).get('mean_similarity_score', 0.0)
@@ -1342,6 +1348,66 @@ class PeptideEvaluator:
         else:
             return {'mean_plddt': 0.0, 'std_plddt': 0.0, 'valid_sequences': 0}
     
+    def _compute_simple_physicochemical_properties(self, sequences):
+        """
+        简化的理化性质计算（不依赖modlamp）
+        """
+        # 氨基酸属性表
+        aa_charge = {'R': 1, 'K': 1, 'H': 0.5, 'D': -1, 'E': -1}
+        aa_hydrophobicity = {
+            'A': 0.62, 'R': -2.53, 'N': -0.78, 'D': -0.90, 'C': 0.29,
+            'Q': -0.85, 'E': -0.74, 'G': 0.48, 'H': -0.40, 'I': 1.38,
+            'L': 1.06, 'K': -1.50, 'M': 0.64, 'F': 1.19, 'P': 0.12,
+            'S': -0.18, 'T': -0.05, 'W': 0.81, 'Y': 0.26, 'V': 1.08
+        }
+        aromatic_aa = set('FWY')
+        
+        charges, hydrophobicities, isoelectric_points, aromaticities = [], [], [], []
+        
+        for seq in sequences:
+            # 净电荷
+            charge = sum(aa_charge.get(aa, 0) for aa in seq)
+            charges.append(charge)
+            
+            # 平均疏水性
+            hydro = [aa_hydrophobicity.get(aa, 0) for aa in seq]
+            avg_hydro = mean(hydro) if hydro else 0
+            hydrophobicities.append(avg_hydro)
+            
+            # 简化等电点估算
+            basic_count = sum(1 for aa in seq if aa in 'RKH')
+            acidic_count = sum(1 for aa in seq if aa in 'DE')
+            if basic_count > acidic_count:
+                iep = 8.5 + basic_count * 0.5
+            elif acidic_count > basic_count:
+                iep = 6.0 - acidic_count * 0.3
+            else:
+                iep = 7.0
+            isoelectric_points.append(max(3.0, min(11.0, iep)))
+            
+            # 芳香性
+            aromatic_ratio = sum(1 for aa in seq if aa in aromatic_aa) / len(seq)
+            aromaticities.append(aromatic_ratio)
+        
+        return {
+            'charge': {
+                'mean_charge': mean(charges),
+                'std_charge': stdev(charges) if len(charges) > 1 else 0.0
+            },
+            'isoelectric_point': {
+                'mean_isoelectric_point': mean(isoelectric_points),
+                'std_isoelectric_point': stdev(isoelectric_points) if len(isoelectric_points) > 1 else 0.0
+            },
+            'hydrophobicity': {
+                'mean_hydrophobicity': mean(hydrophobicities),
+                'std_hydrophobicity': stdev(hydrophobicities) if len(hydrophobicities) > 1 else 0.0
+            },
+            'aromaticity': {
+                'mean_aromaticity': mean(aromaticities),
+                'std_aromaticity': stdev(aromaticities) if len(aromaticities) > 1 else 0.0
+            }
+        }
+
     def evaluate_physicochemical_properties(self, sequences):
         """
         计算理化性质
@@ -1349,11 +1415,8 @@ class PeptideEvaluator:
         包括：电荷、等电点、疏水性、芳香性
         """
         if not MODLAMP_AVAILABLE:
-            logger.warning("⚠️ modlamp未安装，跳过理化性质计算")
-            return {
-                'mean_charge': 0.0, 'mean_isoelectric_point': 0.0,
-                'mean_hydrophobicity': 0.0, 'mean_aromaticity': 0.0
-            }
+            logger.warning("⚠️ modlamp未安装，使用简化的理化性质计算")
+            return self._compute_simple_physicochemical_properties(sequences)
         
         logger.info("⚙️ 计算理化性质...")
         

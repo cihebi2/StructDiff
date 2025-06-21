@@ -8,7 +8,13 @@ from .cross_attention import CrossModalAttention
 from .layers.attention import MultiHeadSelfAttention
 from .layers.embeddings import TimestepEmbedding, ConditionEmbedding
 from .layers.mlp import FeedForward
-from .layers.alphafold3_embeddings import AF3TimestepEmbedding, AF3AdaptiveLayerNorm
+from .layers.alphafold3_embeddings import (
+    AF3TimestepEmbedding, 
+    AF3AdaptiveLayerNorm,
+    AF3AdaptiveConditioning,
+    AF3EnhancedConditionalLayerNorm,
+    AF3ConditionalZeroInit
+)
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -35,10 +41,20 @@ class StructureAwareDenoiser(nn.Module):
         self.seq_input_proj = nn.Linear(seq_hidden_dim, self.hidden_dim)
         self.struct_input_proj = nn.Linear(struct_hidden_dim, self.hidden_dim)
         
-        # Timestep and condition embeddings (AF3 style)
+        # Enhanced AF3-style conditioning system
         self.time_embedding = AF3TimestepEmbedding(self.hidden_dim)
+        
+        # Multi-aspect adaptive conditioning
+        self.adaptive_conditioning = AF3AdaptiveConditioning(
+            hidden_dim=self.hidden_dim,
+            condition_dim=self.hidden_dim // 2,  # Condition dimension
+            num_condition_types=4,  # antimicrobial, antifungal, antiviral, unconditioned
+            dropout=self.dropout
+        )
+        
+        # Fallback simple condition embedding for compatibility
         self.condition_embedding = ConditionEmbedding(
-            num_classes=4,  # antimicrobial, antifungal, antiviral, unconditioned
+            num_classes=4,
             hidden_dim=self.hidden_dim,
             dropout_prob=0.1
         )
@@ -54,9 +70,16 @@ class StructureAwareDenoiser(nn.Module):
             for _ in range(self.num_layers)
         ])
         
-        # Output projection
-        self.output_norm = nn.LayerNorm(self.hidden_dim)
-        self.output_proj = nn.Linear(self.hidden_dim, seq_hidden_dim)
+        # Enhanced output with adaptive conditioning
+        self.output_norm = AF3EnhancedConditionalLayerNorm(
+            self.hidden_dim, 
+            condition_dim=self.hidden_dim // 2
+        )
+        self.output_proj = AF3ConditionalZeroInit(
+            self.hidden_dim, 
+            seq_hidden_dim,
+            condition_dim=self.hidden_dim // 2
+        )
         
     def forward(
         self,
@@ -83,8 +106,16 @@ class StructureAwareDenoiser(nn.Module):
         time_emb = time_emb.unsqueeze(1).expand(-1, seq_len, -1)
         x = x + time_emb
         
-        # Add condition embedding if provided
+        # Generate adaptive conditioning signals
+        conditioning_signals = None
         if conditions is not None and 'peptide_type' in conditions:
+            # Use enhanced AF3-style adaptive conditioning
+            conditioning_signals = self.adaptive_conditioning(
+                conditions['peptide_type'],
+                strength_modifier=conditions.get('condition_strength', None)
+            )
+            
+            # Add base condition embedding to input (for backward compatibility)
             cond_emb = self.condition_embedding(conditions['peptide_type'])
             cond_emb = cond_emb.unsqueeze(1).expand(-1, seq_len, -1)
             x = x + cond_emb
@@ -94,20 +125,21 @@ class StructureAwareDenoiser(nn.Module):
         if structure_features is not None:
             struct_features = self.struct_input_proj(structure_features)
         
-        # Apply denoising blocks
+        # Apply denoising blocks with adaptive conditioning
         cross_attention_weights = []
         for block in self.blocks:
             x, cross_attn = block(
                 x,
                 attention_mask,
-                structure_features=struct_features
+                structure_features=struct_features,
+                conditioning_signals=conditioning_signals
             )
             if cross_attn is not None:
                 cross_attention_weights.append(cross_attn)
         
-        # Output projection
-        x = self.output_norm(x)
-        denoised = self.output_proj(x)
+        # Enhanced output projection with adaptive conditioning
+        x = self.output_norm(x, conditioning_signals)
+        denoised = self.output_proj(x, conditioning_signals)
         
         # Stack cross-attention weights
         if cross_attention_weights:
@@ -132,21 +164,27 @@ class DenoisingBlock(nn.Module):
     ):
         super().__init__()
         
-        # Self-attention
+        # Self-attention with enhanced normalization
         self.self_attn = MultiHeadSelfAttention(
             hidden_dim, num_heads, dropout
         )
-        self.self_attn_norm = nn.LayerNorm(hidden_dim)
+        self.self_attn_norm = AF3EnhancedConditionalLayerNorm(
+            hidden_dim, 
+            condition_dim=hidden_dim // 2
+        )
         
-        # Cross-attention (optional)
+        # Cross-attention (optional) with enhanced normalization
         self.use_cross_attention = use_cross_attention
         if use_cross_attention:
             self.cross_attn = CrossModalAttention(
                 hidden_dim, num_heads, dropout
             )
-            self.cross_attn_norm = nn.LayerNorm(hidden_dim)
+            self.cross_attn_norm = AF3EnhancedConditionalLayerNorm(
+                hidden_dim, 
+                condition_dim=hidden_dim // 2
+            )
         
-        # Feed-forward with GLU (Gated Linear Unit)
+        # Feed-forward with GLU (Gated Linear Unit) and adaptive conditioning
         self.ffn = FeedForward(
             hidden_dim=hidden_dim,
             intermediate_dim=hidden_dim * 4,
@@ -155,29 +193,38 @@ class DenoisingBlock(nn.Module):
             use_gate=True  # Enable GLU
         )
         
+        # Enhanced FFN normalization
+        self.ffn_norm = AF3EnhancedConditionalLayerNorm(
+            hidden_dim,
+            condition_dim=hidden_dim // 2
+        )
+        
     def forward(
         self,
         x: torch.Tensor,
         attention_mask: torch.Tensor,
-        structure_features: Optional[torch.Tensor] = None
+        structure_features: Optional[torch.Tensor] = None,
+        conditioning_signals: Optional[dict] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        # Self-attention
+        # Self-attention with adaptive conditioning
         residual = x
-        x = self.self_attn_norm(x)
+        x = self.self_attn_norm(x, conditioning_signals)
         x = self.self_attn(x, attention_mask) + residual
         
-        # Cross-attention
+        # Cross-attention with adaptive conditioning
         cross_attn_weights = None
         if self.use_cross_attention and structure_features is not None:
             residual = x
-            x_norm = self.cross_attn_norm(x)
+            x_norm = self.cross_attn_norm(x, conditioning_signals)
             x_cross, cross_attn_weights = self.cross_attn(
                 x_norm, structure_features, attention_mask
             )
             x = x_cross + residual
         
-        # Feed-forward (GLU with built-in residual and norm)
-        x = self.ffn(x)
+        # Feed-forward with adaptive conditioning
+        residual = x
+        x_norm = self.ffn_norm(x, conditioning_signals)
+        x = self.ffn(x_norm) + residual
         
         return x, cross_attn_weights
 # Updated: 05/30/2025 22:59:09

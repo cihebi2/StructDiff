@@ -1,0 +1,246 @@
+# CPL-Diff启发的分离式训练配置
+experiment:
+  name: "structdiff_separated_training"
+  description: "两阶段分离式训练：阶段1训练去噪器，阶段2训练解码器"
+  project: "StructDiff-Separated"
+  seed: 42
+
+# 模型配置
+model:
+  type: "StructDiff"
+  
+  # 序列编码器配置
+  sequence_encoder:
+    pretrained_model: "facebook/esm2_t6_8M_UR50D"
+    freeze_encoder: false  # 阶段1时将被动态设置为true
+    use_lora: true
+    lora_rank: 16
+    lora_alpha: 32
+    lora_dropout: 0.1
+  
+  # 结构编码器配置
+  structure_encoder:
+    type: "multi_scale"
+    hidden_dim: 256
+    use_esmfold: false
+    local:
+      hidden_dim: 256
+      num_layers: 3
+      kernel_sizes: [3, 5, 7]
+      dropout: 0.1
+    global:
+      hidden_dim: 512
+      num_attention_heads: 8
+      num_layers: 4
+      dropout: 0.1
+    fusion:
+      method: "attention"
+      hidden_dim: 256
+  
+  # 去噪器配置
+  denoiser:
+    hidden_dim: 768
+    num_layers: 12
+    num_heads: 12
+    dropout: 0.1
+    use_cross_attention: true
+    
+  # 序列解码器配置
+  sequence_decoder:
+    hidden_dim: 768
+    num_layers: 6
+    vocab_size: 33  # ESM-2词汇表大小
+    dropout: 0.1
+
+# 扩散过程配置
+diffusion:
+  num_timesteps: 1000
+  noise_schedule: "sqrt"  # CPL-Diff推荐的调度
+  beta_start: 0.0001
+  beta_end: 0.02
+  
+  # 采样配置
+  sampling_method: "ddpm"
+  ddim_steps: 50
+
+# 分离式训练配置
+separated_training:
+  # 阶段1: 去噪器训练
+  stage1:
+    epochs: 200
+    batch_size: 32
+    learning_rate: 1e-4
+    warmup_steps: 1000
+    gradient_clip: 1.0
+    
+    # 优化器
+    optimizer:
+      type: "AdamW"
+      weight_decay: 0.01
+      betas: [0.9, 0.999]
+      eps: 1e-8
+    
+    # 学习率调度
+    scheduler:
+      type: "cosine"
+      eta_min: 1e-6
+  
+  # 阶段2: 解码器训练
+  stage2:
+    epochs: 100
+    batch_size: 64
+    learning_rate: 5e-5
+    warmup_steps: 500
+    gradient_clip: 0.5
+    
+    # 优化器
+    optimizer:
+      type: "AdamW"
+      weight_decay: 0.01
+      betas: [0.9, 0.999]
+      eps: 1e-8
+    
+    # 学习率调度
+    scheduler:
+      type: "cosine"
+      eta_min: 1e-6
+
+# 数据配置
+data:
+  data_dir: "./data/processed"
+  train_file: "train.csv"
+  val_file: "val.csv"
+  test_file: "test.csv"
+  
+  # 数据处理
+  max_length: 50
+  min_length: 5
+  
+  # 数据加载
+  num_workers: 4
+  pin_memory: true
+  prefetch_factor: 2
+
+# 长度控制配置
+length_control:
+  enabled: true
+  min_length: 5
+  max_length: 50
+  
+  # 长度分布分析
+  analyze_training_data: true
+  save_distributions: true
+  
+  # 长度惩罚
+  length_penalty_weight: 0.1
+  
+  # 肽段类型特定长度偏好
+  type_specific_lengths:
+    antimicrobial: [20, 8]    # [mean, std]
+    antifungal: [25, 10]
+    antiviral: [30, 12]
+    general: [25, 5]
+
+# 分类器自由引导配置
+classifier_free_guidance:
+  enabled: true
+  dropout_prob: 0.1         # 训练时条件丢弃概率
+  guidance_scale: 2.0       # 推理时引导强度
+  
+  # 高级配置
+  adaptive_guidance: true   # 自适应引导强度
+  guidance_schedule: "cosine"  # constant, linear, cosine
+
+# 训练增强配置
+training_enhancements:
+  # 混合精度训练
+  use_amp: true
+  amp_dtype: "float16"
+  
+  # 指数移动平均
+  use_ema: true
+  ema_decay: 0.9999
+  ema_update_every: 10
+  
+  # 梯度累积
+  gradient_accumulation_steps: 1
+  
+  # 检查点和日志
+  save_every: 1000
+  validate_every: 500
+  log_every: 100
+  max_checkpoints: 5
+
+# 评估配置
+evaluation:
+  # CPL-Diff标准评估指标
+  metrics:
+    - pseudo_perplexity     # ESM-2伪困惑度
+    - plddt_score          # ESMFold结构置信度
+    - instability_index    # modlAMP不稳定性指数
+    - similarity_score     # BLOSUM62相似性
+    - activity_prediction  # 外部分类器活性预测
+    - information_entropy  # 信息熵
+    - novelty_ratio       # 新颖性比例
+  
+  # 生成配置
+  generation:
+    num_samples: 1000
+    guidance_scale: 2.0
+    temperature: 1.0
+    use_length_control: true
+    
+  # 评估频率
+  evaluate_every: 5  # 每5个epoch评估一次
+
+# 输出配置
+output:
+  base_dir: "./outputs/separated_training"
+  checkpoint_dir: "./outputs/separated_training/checkpoints"
+  log_dir: "./outputs/separated_training/logs"
+  results_dir: "./outputs/separated_training/results"
+  
+  # 保存配置
+  save_model_config: true
+  save_training_stats: true
+  save_generated_samples: true
+
+# 监控配置
+monitoring:
+  # Weights & Biases
+  wandb:
+    enabled: true
+    project: "StructDiff-Separated"
+    entity: null
+    tags: ["separated-training", "cpl-diff-inspired", "two-stage"]
+    
+    # 监控指标
+    log_gradients: false
+    log_parameters: false
+    log_frequency: 100
+  
+  # TensorBoard
+  tensorboard:
+    enabled: true
+    log_dir: "./outputs/separated_training/tensorboard"
+
+# 调试和开发配置
+debug:
+  enabled: false
+  use_small_dataset: false
+  small_dataset_size: 1000
+  save_intermediate_results: false
+  detailed_logging: false
+
+# 资源配置
+resources:
+  # GPU配置
+  gpu_memory_fraction: 0.9
+  allow_growth: true
+  
+  # CPU配置
+  num_threads: 8
+  
+  # 内存配置
+  pin_memory: true
+  non_blocking: true

@@ -108,10 +108,31 @@ class TestCFGFunctionality:
     
     def test_guided_denoising(self):
         """测试引导去噪"""
-        # 创建简单的模型函数
-        def simple_model(x_t, t, conditions):
-            # 简单返回输入（仅用于测试）
-            return x_t * 0.9
+        # 创建能够区分条件的模型函数
+        def condition_aware_model(x_t, t, conditions):
+            # 检查是否有条件
+            if conditions is None:
+                # 无条件：返回较大的输出
+                return x_t * 1.5
+            elif 'peptide_type' in conditions:
+                peptide_type = conditions['peptide_type']
+                # 有条件：根据肽段类型调整输出
+                if isinstance(peptide_type, torch.Tensor):
+                    # 检查是否有无条件标记
+                    if 'is_unconditional' in conditions and torch.any(conditions['is_unconditional']):
+                        # 有无条件标记，按无条件处理
+                        return x_t * 1.5
+                    elif torch.any(peptide_type == -1):
+                        # 如果是-1表示丢弃的条件，按无条件处理
+                        return x_t * 1.5
+                    else:
+                        # 根据肽段类型调整输出
+                        type_factor = 0.8 + 0.1 * peptide_type.float().mean()
+                        return x_t * type_factor
+                else:
+                    return x_t * 0.9
+            else:
+                return x_t * 0.9
         
         x_t = torch.randn(self.batch_size, self.seq_length, self.hidden_dim, device=self.device)
         t = torch.randint(0, 100, (self.batch_size,), device=self.device)
@@ -120,13 +141,19 @@ class TestCFGFunctionality:
         }
         
         # 测试有引导和无引导的差异
-        guided_output = self.cfg.guided_denoising(simple_model, x_t, t, conditions, 2.0)
-        unguided_output = self.cfg.guided_denoising(simple_model, x_t, t, conditions, 1.0)
+        guided_output = self.cfg.guided_denoising(condition_aware_model, x_t, t, conditions, 2.0)
+        unguided_output = self.cfg.guided_denoising(condition_aware_model, x_t, t, conditions, 1.0)
         
         assert guided_output.shape == x_t.shape
         assert unguided_output.shape == x_t.shape
+        
         # 引导输出应该与无引导输出不同
-        assert not torch.allclose(guided_output, unguided_output)
+        print(f"引导输出均值: {guided_output.mean().item():.4f}")
+        print(f"无引导输出均值: {unguided_output.mean().item():.4f}")
+        print(f"差异: {torch.abs(guided_output - unguided_output).mean().item():.4f}")
+        
+        # 使用更宽松的tolerance
+        assert not torch.allclose(guided_output, unguided_output, rtol=1e-3, atol=1e-3)
 
 
 class TestLengthSampler:
@@ -210,7 +237,12 @@ class TestLengthSampler:
         
         # 验证概率分布的性质
         assert probs.shape[1] == self.length_config.max_length - self.length_config.min_length + 1
-        assert torch.allclose(torch.sum(probs, dim=-1), torch.ones(probs.shape[0]))
+        
+        # 确保所有张量在同一设备上
+        prob_sums = torch.sum(probs, dim=-1)
+        expected_ones = torch.ones(probs.shape[0], device=self.device)
+        
+        assert torch.allclose(prob_sums, expected_ones)
         assert torch.all(probs >= 0)
     
     def test_temperature_effects(self):

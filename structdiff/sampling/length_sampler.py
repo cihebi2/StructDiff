@@ -88,7 +88,9 @@ class NormalLengthDistribution(BaseLengthDistribution):
     
     def log_prob(self, lengths: torch.Tensor) -> torch.Tensor:
         """计算对数概率（连续近似）"""
-        return self.distribution.log_prob(lengths.float())
+        log_probs = self.distribution.log_prob(lengths.float())
+        # 确保返回值与输入在同一设备上
+        return log_probs.to(lengths.device)
 
 
 class UniformLengthDistribution(BaseLengthDistribution):
@@ -124,7 +126,8 @@ class GammaLengthDistribution(BaseLengthDistribution):
         return torch.round(clipped).long()
     
     def log_prob(self, lengths: torch.Tensor) -> torch.Tensor:
-        return self.distribution.log_prob(lengths.float())
+        log_probs = self.distribution.log_prob(lengths.float())
+        return log_probs.to(lengths.device)
 
 
 class BetaLengthDistribution(BaseLengthDistribution):
@@ -147,7 +150,8 @@ class BetaLengthDistribution(BaseLengthDistribution):
     def log_prob(self, lengths: torch.Tensor) -> torch.Tensor:
         # 将长度转换回[0,1]范围计算概率
         normalized = (lengths.float() - self.min_len) / self.range
-        return self.distribution.log_prob(normalized) - math.log(self.range)
+        log_probs = self.distribution.log_prob(normalized) - math.log(self.range)
+        return log_probs.to(lengths.device)
 
 
 class CustomLengthDistribution(BaseLengthDistribution):
@@ -172,7 +176,7 @@ class CustomLengthDistribution(BaseLengthDistribution):
     
     def log_prob(self, lengths: torch.Tensor) -> torch.Tensor:
         # 找到每个长度对应的概率
-        log_probs = torch.zeros_like(lengths, dtype=torch.float)
+        log_probs = torch.zeros_like(lengths, dtype=torch.float, device=lengths.device)
         for i, length in enumerate(lengths):
             idx = (self.lengths == length).nonzero(as_tuple=True)[0]
             if len(idx) > 0:

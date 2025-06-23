@@ -21,4 +21,4 @@ python3 scripts/train_peptide_esmfold.py \
     --debug \
     "$@"
 
-echo "✅ 训练完成"
+echo "✅ 训练完成" 

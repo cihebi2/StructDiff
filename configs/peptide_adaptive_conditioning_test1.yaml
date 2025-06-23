@@ -1,0 +1,244 @@
+data:
+  augmentation:
+    enable: true
+    mask_prob: 0.18        # 增加掩码概率
+    noise_level: 0.12      # 增加噪声水平
+    structure_noise: 0.08  # 增加结构噪声
+  batch_size: 6           # 减小批次大小以支持更复杂训练
+  max_length: 50
+  min_length: 5
+  num_workers: 1
+  pin_memory: false
+  prefetch_factor: 1
+  structure_cache_dir: ./data/processed/structure_cache
+  structure_prediction:
+    batch_size: 6
+    cache_predictions: true
+    method: esmfold
+  target_columns:
+    annotation: annotation
+    label: label
+    sequence: sequence
+    weight: weight
+  test_path: ./data/processed/test.csv
+  train_path: ./data/processed/train.csv
+  use_predicted_structures: true
+  val_path: ./data/processed/val.csv
+
+diffusion:
+  beta_end: 0.025         # 增加噪声范围
+  beta_start: 0.0001
+  conditioning:
+    classifier_free_guidance: true
+    guidance_scale: 2.0    # 增强引导强度
+    peptide_type: true
+    structure_guidance: true
+  ddim_steps: 150         # 增加采样步数
+  loss_type: mse
+  noise_schedule: alphafold3
+  num_timesteps: 1000
+  prediction_type: epsilon
+  sampling_method: ddpm
+
+evaluation:
+  condition_specific_evaluation:
+    condition_interpolation_test: true
+    condition_transfer_evaluation: true
+    enabled: true
+    evaluate_per_condition: true
+  generation:
+    guidance_scale: 2.0
+    num_samples: 100      # 增加生成样本数
+    temperature: 0.9      # 降低温度
+    top_p: 0.85          # 降低top_p
+  metrics:
+  - perplexity
+  - accuracy
+  - structure_consistency
+  - diversity
+  - peptide_properties
+
+experiment:
+  checkpoint_dir: ./checkpoints
+  log_dir: ./logs
+  name: peptide_adaptive_conditioning_test1
+  output_dir: ./outputs
+  project: StructDiff-AdaptiveConditioning-Test1
+  seed: 43              # 不同随机种子
+
+logging:
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  level: INFO
+  log_every: 25         # 更频繁的日志
+  save_every: 50
+
+loss_weights:
+  auxiliary_loss: 0.08   # 增加辅助损失权重
+  classification_loss: 0.15  # 增加分类损失权重
+  diffusion_loss: 1.0
+  structure_consistency_loss: 0.3  # 增加结构一致性权重
+
+memory_optimization:
+  cleanup_frequency: 40
+  disable_esmfold_in_eval: true
+  generation_batch_size: 3
+  gradient_checkpointing: true
+
+model:
+  adaptive_conditioning:
+    biological_initialization:
+      antifungal_bias: 0.3     # 显著增加抗真菌偏置
+      antimicrobial_bias: 0.7  # 增加抗菌偏置
+      antiviral_bias: 0.1      # 增加抗病毒偏置（从负值改为正值）
+      unconditioned_bias: 0.0
+    condition_dim_ratio: 0.6   # 增加条件维度比例
+    dropout: 0.08              # 降低dropout
+    enabled: true
+    multi_aspect_control:
+      charge_control: true
+      fine_grained_modulation: true
+      functional_control: true
+      hydrophobic_control: true
+      structure_control: true
+    num_condition_types: 4
+    strength_control:
+      adaptive_strength_learning: true
+      default_strength: 1.3     # 增加默认强度
+      enabled: true
+      strength_range:
+      - 0.3                    # 提高最小强度
+      - 2.5                    # 提高最大强度
+    zero_initialization:
+      condition_networks_zero_init: true
+      fine_gate_bias: -2.5     # 降低gate偏置以增加激活
+      primary_gate_bias: -1.5  # 降低gate偏置以增加激活
+  denoiser:
+    conditional_zero_init: true
+    dropout: 0.08
+    enhanced_layer_norm: true
+    hidden_dim: 320           # 增加隐藏维度
+    num_heads: 10             # 增加注意力头数
+    num_layers: 8             # 增加层数
+    use_adaptive_conditioning: true
+    use_cross_attention: true
+    use_rotary_embeddings: true
+  sequence_encoder:
+    freeze_encoder: false
+    lora_alpha: 48           # 增加LoRA alpha
+    lora_dropout: 0.08
+    lora_rank: 24            # 增加LoRA rank
+    pretrained_model: facebook/esm2_t6_8M_UR50D
+    use_lora: true
+  structure_encoder:
+    esmfold_config:
+      cache_results: true
+      chunk_size: 96         # 减小chunk size
+      model_name: facebook/esmfold_v1
+      use_fp16: true
+    fusion:
+      hidden_dim: 384        # 增加融合维度
+      method: attention
+    global:
+      dropout: 0.08
+      hidden_dim: 576        # 增加全局维度
+      num_attention_heads: 12 # 增加注意力头
+      num_layers: 8          # 增加层数
+    hidden_dim: 384
+    local:
+      dropout: 0.08
+      hidden_dim: 384
+      kernel_sizes:
+      - 3
+      - 5
+      - 7
+      - 9
+      - 11                   # 添加更大kernel
+      num_layers: 6          # 增加层数
+    type: multi_scale
+    use_esmfold: true
+  type: StructDiff
+
+special:
+  esmfold_memory_management:
+    clear_cache_every: 80
+    enable_gradient_checkpointing: true
+    max_cache_size: 800
+  peptide_specific:
+    class_names:
+    - antimicrobial
+    - antifungal
+    - antiviral
+    class_weights:
+    - 1.0
+    - 2.0                    # 大幅增加抗真菌权重
+    - 1.3                    # 增加抗病毒权重
+    enable_functional_classification: true
+    enable_secondary_structure_loss: true
+
+system:
+  benchmark: false
+  cuda_visible_devices: '3'  # 使用GPU 3
+  deterministic: true
+  mixed_precision: true
+
+training:
+  amp_dtype: float16
+  conditioning_training:
+    adaptive_loss_weights:
+      condition_consistency_weight: 0.15  # 增加条件一致性权重
+      condition_smoothness_weight: 0.03   # 增加平滑性权重
+      condition_specificity_weight: 0.08  # 增加特异性权重
+    condition_mixing:
+      enabled: true
+      mixing_probability: 0.15             # 增加混合概率
+      unconditioned_probability: 0.05     # 减少无条件概率
+    strength_scheduling:
+      enabled: true
+      final_strength: 1.8                 # 增加最终强度
+      initial_strength: 1.0               # 增加初始强度
+      schedule_type: cosine
+      warmup_steps: 1500                  # 增加warmup步数
+  early_stopping:
+    enabled: true
+    metric: val_loss
+    min_delta: 0.0005      # 更严格的早停标准
+    mode: min
+    patience: 12           # 增加耐心值
+  ema_decay: 0.9995        # 调整EMA衰减
+  ema_update_every: 3      # 更频繁的EMA更新
+  gradient_accumulation_steps: 6  # 增加梯度累积
+  gradient_clip: 0.8       # 降低梯度裁剪
+  log_every: 25
+  max_checkpoints: 8       # 保留更多检查点
+  num_epochs: 75           # 增加训练轮数
+  optimizer:
+    betas:
+    - 0.9
+    - 0.999
+    eps: 1e-8
+    lr: 8e-5               # 增加学习率
+    type: AdamW
+    weight_decay: 0.008    # 降低权重衰减
+  save_every: 300
+  scheduler:
+    min_lr: 5e-7           # 降低最小学习率
+    num_warmup_steps: 800  # 增加warmup步数
+    type: cosine
+  use_amp: true
+  use_ema: true
+  validate_every: 1
+
+wandb:
+  enabled: true
+  entity: null
+  notes: AF3自适应条件化测试1 - 增强条件强度和学习策略
+  project: StructDiff-AdaptiveConditioning-Test1
+  tags:
+  - peptide
+  - esmfold
+  - diffusion
+  - antimicrobial
+  - antifungal
+  - antiviral
+  - test1
+  - enhanced_conditioning 

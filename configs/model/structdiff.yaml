@@ -1,0 +1,121 @@
+# StructDiff model configuration
+model:
+  name: "StructDiff"
+  
+  # Model dimensions
+  hidden_dim: 768
+  intermediate_dim: 3072
+  num_attention_heads: 12
+  num_layers: 12
+  
+  # Sequence encoder (ESM-2)
+  sequence_encoder:
+    pretrained_model: "facebook/esm2_t33_650M_UR50D"
+    freeze_encoder: false
+    use_lora: true
+    lora_rank: 16
+    lora_alpha: 32
+    lora_dropout: 0.1
+    
+  # Structure encoder
+  structure_encoder:
+    type: "multi_scale"
+    hidden_dim: 768
+    use_esmfold: false
+    
+    # Local structure features
+    local:
+      hidden_dim: 256
+      num_layers: 3
+      kernel_sizes: [3, 5, 7]
+      dropout: 0.1
+      
+    # Global structure features
+    global:
+      hidden_dim: 512
+      num_attention_heads: 8
+      num_layers: 4
+      dropout: 0.1
+      
+    # Feature fusion
+    fusion:
+      method: "attention"  # concat, add, or attention
+      hidden_dim: 768
+      
+  # Cross-attention modules
+  cross_attention:
+    num_layers: 6
+    hidden_dim: 768
+    num_heads: 12
+    dropout: 0.1
+    bidirectional: true
+    
+  # Denoiser network
+  denoiser:
+    hidden_dim: 768
+    num_layers: 12
+    num_heads: 12
+    num_attention_heads: 12  # Alias for compatibility
+    intermediate_dim: 3072
+    dropout: 0.1
+    use_cross_attention: true
+    
+    # Time embedding
+    time_embedding:
+      dim: 256
+      max_period: 10000
+      
+    # Condition embedding
+    condition_embedding:
+      peptide_types: ["antimicrobial", "antifungal", "antiviral"]
+      embedding_dim: 256
+      dropout: 0.1
+      
+  # Output head
+  output_head:
+    type: "linear"  # linear or mlp
+    hidden_dim: 768
+    dropout: 0.1
+    
+  # Regularization
+  regularization:
+    dropout: 0.1
+    attention_dropout: 0.1
+    hidden_dropout: 0.1
+    layer_norm_eps: 1e-12
+    
+  # Initialization
+  initialization:
+    method: "normal"
+    std: 0.02
+
+# Diffusion settings (merged from main config)
+diffusion:
+  num_timesteps: 1000
+  noise_schedule: "sqrt"
+  beta_start: 0.0001
+  beta_end: 0.02
+    
+# Training-specific model settings
+training_config:
+  # Loss weights
+  loss_weights:
+    diffusion_loss: 1.0
+    structure_consistency_loss: 0.1
+    auxiliary_loss: 0.01
+    
+  # Gradient checkpointing
+  gradient_checkpointing: true
+  
+  # Model parallelism
+  model_parallel: false
+  
+  # Precision
+  mixed_precision: true
+# Updated: 05/31/2025 15:11:07
+
+# Updated: 05/31/2025 15:14:04
+
+# Updated: 05/31/2025 23:30:00
+
+# Updated: 05/31/2025 23:30:18

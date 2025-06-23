@@ -1,0 +1,27 @@
+StructDiff集成评估摘要
+========================================
+
+评估概况:
+  肽类型: antimicrobial
+  生成序列数: 10
+  参考序列数: 5
+  成功评估方法: lightweight
+  尝试的方法: lightweight, original_failed
+
+依赖状态:
+  可用: 无
+  缺失: transformers, torch, Bio, scipy, matplotlib, seaborn, modlamp, numpy, pandas
+
+LIGHTWEIGHT评估结果:
+--------------------
+  有效序列率: 10/10
+  平均长度: 10.4
+  信息熵: 1.970
+  伪困惑度: 20.139
+  计算方法: fallback_natural_frequency
+  新颖性比例: 0.900
+
+说明:
+- enhanced: 使用完整CPL-Diff指标（需要transformers, torch等）
+- lightweight: 使用简化CPL-Diff指标（纯Python实现）
+- original: 使用StructDiff原有指标

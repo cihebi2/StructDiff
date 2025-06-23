@@ -1,0 +1,254 @@
+# StructDiff CFG + Length Sampler Configuration
+# 集成Classifier-Free Guidance和长度分布采样器的配置文件
+
+# 模型基础配置
+model:
+  seq_hidden_dim: 768
+  struct_hidden_dim: 768
+  
+  # 去噪器配置
+  denoiser:
+    hidden_dim: 768
+    num_heads: 12
+    num_layers: 8
+    dropout: 0.1
+    use_cross_attention: true
+    
+    # AlphaFold3增强特性
+    use_af3_embeddings: true
+    use_adaptive_conditioning: true
+
+# Classifier-Free Guidance 配置
+classifier_free_guidance:
+  enabled: true
+  
+  # 训练时配置
+  dropout_prob: 0.15  # 条件丢弃概率（CPL-Diff推荐10-15%）
+  unconditional_token: "<UNCOND>"
+  
+  # 推理时配置
+  guidance_scale: 2.5  # 默认引导强度
+  guidance_scale_range: [1.0, 5.0]  # 引导强度范围
+  
+  # 高级特性
+  adaptive_guidance: true  # 自适应引导强度
+  multi_level_guidance: false  # 多级引导（实验性）
+  guidance_schedule: "cosine"  # constant, linear, cosine
+  
+  # 条件类型映射
+  condition_mapping:
+    antimicrobial: 0
+    antifungal: 1
+    antiviral: 2
+    general: 3
+    unconditional: 4  # CFG无条件类
+
+# 长度分布采样器配置
+length_sampler:
+  enabled: true
+  
+  # 基础长度约束
+  min_length: 5
+  max_length: 50
+  default_length: 25
+  
+  # 分布类型和参数
+  distribution_type: "normal"  # normal, uniform, gamma, beta, custom
+  
+  # 正态分布参数
+  normal_mean: 25.0
+  normal_std: 8.0
+  
+  # Gamma分布参数
+  gamma_shape: 2.0
+  gamma_scale: 12.5
+  
+  # Beta分布参数
+  beta_alpha: 2.0
+  beta_beta: 2.0
+  
+  # 自定义分布（长度->概率映射）
+  custom_distribution:
+    10: 0.1
+    15: 0.2
+    20: 0.3
+    25: 0.25
+    30: 0.1
+    35: 0.05
+  
+  # 高级配置
+  use_adaptive_sampling: true
+  adaptive_temperature: 1.0
+  length_embedding_dim: 64
+  
+  # 条件相关的长度偏好
+  condition_dependent: true
+  peptide_type_length_prefs:
+    antimicrobial: [20.0, 8.0]    # [mean, std]
+    antifungal: [25.0, 10.0]
+    antiviral: [30.0, 12.0]
+    general: [25.0, 5.0]
+
+# 扩散过程配置
+diffusion:
+  num_timesteps: 1000
+  noise_schedule: "cosine"  # linear, cosine, sqrt
+  beta_start: 0.0001
+  beta_end: 0.02
+  
+  # 采样配置
+  sampling_method: "ddpm"  # ddpm, ddim, pndm
+  num_inference_steps: 50  # 推理步数
+  eta: 0.0  # DDIM参数
+
+# 训练配置
+training:
+  batch_size: 32
+  gradient_accumulation_steps: 2
+  num_epochs: 100
+  
+  # 优化器
+  optimizer:
+    type: "AdamW"
+    lr: 5e-5
+    weight_decay: 0.01
+    betas: [0.9, 0.999]
+  
+  # 学习率调度
+  scheduler:
+    type: "cosine"
+    num_warmup_steps: 1000
+    num_training_steps: 50000
+  
+  # CFG训练特定配置
+  cfg_training:
+    start_epoch: 10  # 从第10轮开始启用CFG训练
+    condition_dropout_schedule: "linear"  # 条件丢弃调度
+    guidance_loss_weight: 0.1  # CFG损失权重
+  
+  # 长度训练特定配置
+  length_training:
+    length_loss_weight: 0.05  # 长度约束损失权重
+    enforce_length_constraint: true  # 强制长度约束
+    length_prediction_loss: true  # 长度预测损失
+
+# 采样配置
+sampling:
+  # 基础采样
+  num_samples: 1000
+  batch_size: 16
+  temperature: 1.0
+  
+  # CFG采样
+  use_cfg: true
+  cfg_guidance_scale: 2.5
+  cfg_adaptive_guidance: true
+  cfg_multi_level_guidance: false
+  
+  # 多级引导配置（当启用时）
+  multi_level_guidance_scales:
+    peptide_type: 2.5
+    length: 1.5
+    structure: 1.0
+  
+  # 长度采样
+  use_length_sampler: true
+  length_distribution: "normal"
+  length_mean: 25.0
+  length_std: 8.0
+  length_temperature: 1.0
+  
+  # 条件采样
+  conditional_sampling:
+    peptide_types: ["antimicrobial", "antifungal", "antiviral"]
+    type_probabilities: [0.4, 0.3, 0.3]  # 各类型采样概率
+    
+  # 约束采样
+  constraints:
+    enforce_length: true
+    min_diversity: 0.7  # 最小序列多样性
+    max_similarity: 0.8  # 最大序列相似性
+    
+  # 后处理
+  post_processing:
+    remove_duplicates: true
+    filter_invalid_sequences: true
+    sort_by_confidence: true
+
+# 评估配置
+evaluation:
+  # 使用CPL-Diff标准评估
+  use_cpldiff_metrics: true
+  
+  # CFG评估
+  cfg_evaluation:
+    guidance_scale_range: [1.0, 1.5, 2.0, 2.5, 3.0]
+    evaluate_unconditional: true
+    
+  # 长度评估
+  length_evaluation:
+    target_distributions: ["normal", "uniform", "gamma"]
+    evaluate_length_control: true
+    length_distribution_metrics: true
+
+# 数据配置
+data:
+  train_path: "data/processed/train.csv"
+  val_path: "data/processed/val.csv"
+  test_path: "data/processed/test.csv"
+  
+  # 数据增强
+  augmentation:
+    enable_masking: true
+    masking_prob: 0.15
+    enable_length_variation: true
+    
+  # CFG数据处理
+  cfg_data_processing:
+    balance_conditions: true  # 平衡条件分布
+    include_unconditional: true  # 包含无条件样本
+    unconditional_ratio: 0.1  # 无条件样本比例
+
+# 实验配置
+experiment:
+  name: "structdiff_cfg_length"
+  output_dir: "outputs"
+  log_dir: "logs"
+  
+  # 检查点
+  save_every_n_epochs: 10
+  keep_n_checkpoints: 5
+  
+  # 日志
+  log_every_n_steps: 100
+  eval_every_n_epochs: 5
+  
+  # 可视化
+  generate_samples_every_n_epochs: 10
+  save_attention_weights: true
+  
+  # WandB配置
+  wandb:
+    enabled: true
+    project: "StructDiff-CFG-Length"
+    entity: "your-entity"
+    tags: ["cfg", "length-sampler", "peptide-generation"]
+
+# 硬件配置
+hardware:
+  device: "cuda"
+  num_gpus: 1
+  mixed_precision: true
+  compile_model: false  # PyTorch 2.0 编译优化
+  
+  # 内存优化
+  gradient_checkpointing: true
+  cpu_offload: false
+  
+# 调试配置
+debug:
+  enabled: false
+  use_small_dataset: false
+  dataset_size_limit: 1000
+  save_intermediate_outputs: false
+  profile_memory: false

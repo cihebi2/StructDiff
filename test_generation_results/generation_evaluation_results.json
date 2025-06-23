@@ -1,0 +1,140 @@
+{
+  "antimicrobial": {
+    "diversity": {
+      "uniqueness": 1.0,
+      "entropy": 4.121750981761592,
+      "total_sequences": 50,
+      "unique_sequences": 50
+    },
+    "length_distribution": {
+      "mean_length": 19.98,
+      "std_length": 6.510556576727946,
+      "min_length": 10,
+      "max_length": 30
+    },
+    "amino_acid_composition": {
+      "freq_A": 0.044044044044044044,
+      "freq_C": 0.044044044044044044,
+      "freq_D": 0.04004004004004004,
+      "freq_E": 0.03403403403403404,
+      "freq_F": 0.04004004004004004,
+      "freq_G": 0.03803803803803804,
+      "freq_H": 0.1061061061061061,
+      "freq_I": 0.03403403403403404,
+      "freq_K": 0.12312312312312312,
+      "freq_L": 0.03903903903903904,
+      "freq_M": 0.031031031031031032,
+      "freq_N": 0.04104104104104104,
+      "freq_P": 0.02702702702702703,
+      "freq_Q": 0.03203203203203203,
+      "freq_R": 0.12912912912912913,
+      "freq_S": 0.03803803803803804,
+      "freq_T": 0.03903903903903904,
+      "freq_V": 0.04804804804804805,
+      "freq_W": 0.037037037037037035,
+      "freq_Y": 0.035035035035035036
+    },
+    "validity": {
+      "validity_rate": 1.0,
+      "valid_sequences": 50,
+      "invalid_sequences": 0
+    },
+    "final_stats": {
+      "total_generated": 50,
+      "unique_sequences": 50,
+      "peptide_type": "antimicrobial"
+    }
+  },
+  "antifungal": {
+    "diversity": {
+      "uniqueness": 1.0,
+      "entropy": 4.231877226449505,
+      "total_sequences": 50,
+      "unique_sequences": 50
+    },
+    "length_distribution": {
+      "mean_length": 20.48,
+      "std_length": 6.101990307619778,
+      "min_length": 10,
+      "max_length": 30
+    },
+    "amino_acid_composition": {
+      "freq_A": 0.0712890625,
+      "freq_C": 0.0419921875,
+      "freq_D": 0.02734375,
+      "freq_E": 0.04296875,
+      "freq_F": 0.0859375,
+      "freq_G": 0.0537109375,
+      "freq_H": 0.0400390625,
+      "freq_I": 0.0693359375,
+      "freq_K": 0.0361328125,
+      "freq_L": 0.072265625,
+      "freq_M": 0.0400390625,
+      "freq_N": 0.0400390625,
+      "freq_P": 0.037109375,
+      "freq_Q": 0.0380859375,
+      "freq_R": 0.0361328125,
+      "freq_S": 0.0400390625,
+      "freq_T": 0.03515625,
+      "freq_V": 0.06640625,
+      "freq_W": 0.0908203125,
+      "freq_Y": 0.03515625
+    },
+    "validity": {
+      "validity_rate": 1.0,
+      "valid_sequences": 50,
+      "invalid_sequences": 0
+    },
+    "final_stats": {
+      "total_generated": 50,
+      "unique_sequences": 50,
+      "peptide_type": "antifungal"
+    }
+  },
+  "antiviral": {
+    "diversity": {
+      "uniqueness": 1.0,
+      "entropy": 4.2310326387409996,
+      "total_sequences": 50,
+      "unique_sequences": 50
+    },
+    "length_distribution": {
+      "mean_length": 21.32,
+      "std_length": 6.092618484691126,
+      "min_length": 10,
+      "max_length": 30
+    },
+    "amino_acid_composition": {
+      "freq_A": 0.043151969981238276,
+      "freq_C": 0.04221388367729831,
+      "freq_D": 0.03470919324577861,
+      "freq_E": 0.04127579737335835,
+      "freq_F": 0.08067542213883677,
+      "freq_G": 0.040337711069418386,
+      "freq_H": 0.03189493433395872,
+      "freq_I": 0.0450281425891182,
+      "freq_K": 0.038461538461538464,
+      "freq_L": 0.04784240150093809,
+      "freq_M": 0.03377110694183865,
+      "freq_N": 0.04127579737335835,
+      "freq_P": 0.054409005628517824,
+      "freq_Q": 0.038461538461538464,
+      "freq_R": 0.04596622889305816,
+      "freq_S": 0.04127579737335835,
+      "freq_T": 0.04409005628517824,
+      "freq_V": 0.058161350844277676,
+      "freq_W": 0.09662288930581614,
+      "freq_Y": 0.10037523452157598
+    },
+    "validity": {
+      "validity_rate": 1.0,
+      "valid_sequences": 50,
+      "invalid_sequences": 0
+    },
+    "final_stats": {
+      "total_generated": 50,
+      "unique_sequences": 50,
+      "peptide_type": "antiviral"
+    }
+  }
+}

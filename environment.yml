@@ -1,0 +1,44 @@
+name: structdiff
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pytorch=2.0.0
+  - torchvision
+  - torchaudio
+  - cudatoolkit=11.8
+  - numpy
+  - pandas
+  - scikit-learn
+  - matplotlib
+  - seaborn
+  - jupyter
+  - ipykernel
+  - tqdm
+  - pyyaml
+  - pip
+  - pip:
+    - transformers>=4.30.0
+    - omegaconf
+    - wandb
+    - biopython
+    - fair-esm
+    - pytest
+    - pytest-cov
+    - black
+    - flake8
+    - isort
+    - scipy
+    - h5py
+    - tensorboard
+# Updated: 05/30/2025 22:59:09
+
+# Updated: 05/31/2025 15:11:07
+
+# Updated: 05/31/2025 15:14:04
+
+# Updated: 05/31/2025 23:30:00
+
+# Updated: 05/31/2025 23:30:18

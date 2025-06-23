@@ -1,0 +1,189 @@
+{
+  "metadata": {
+    "peptide_type": "antimicrobial",
+    "generated_count": 10,
+    "reference_count": 6,
+    "evaluation_timestamp": "2025-06-22 22:08:16",
+    "method": "lightweight_evaluation",
+    "available_libraries": {
+      "transformers": false,
+      "torch": false,
+      "Bio": false,
+      "scipy": false,
+      "matplotlib": false,
+      "seaborn": false,
+      "modlamp": false,
+      "numpy": false,
+      "pandas": false
+    }
+  },
+  "basic_quality": {
+    "total_sequences": 10,
+    "valid_sequences": 10,
+    "average_length": 10.4,
+    "length_distribution": {
+      "11": 5,
+      "10": 4,
+      "9": 1
+    },
+    "amino_acid_composition": {
+      "K": 0.28846153846153844,
+      "R": 0.1346153846153846,
+      "W": 0.11538461538461539,
+      "I": 0.0673076923076923,
+      "F": 0.07692307692307693,
+      "L": 0.20192307692307693,
+      "G": 0.028846153846153848,
+      "D": 0.019230769230769232,
+      "T": 0.009615384615384616,
+      "A": 0.028846153846153848,
+      "E": 0.009615384615384616,
+      "V": 0.019230769230769232
+    },
+    "hydrophobicity_scores": [
+      0.45454545454545453,
+      0.5454545454545454,
+      0.45454545454545453,
+      0.5454545454545454,
+      0.5454545454545454,
+      0.4,
+      0.5555555555555556,
+      0.4,
+      0.7,
+      0.5
+    ],
+    "charge_scores": [
+      6,
+      5,
+      6,
+      1,
+      5,
+      4,
+      1,
+      6,
+      3,
+      4
+    ],
+    "complexity_scores": [
+      0.2,
+      0.25,
+      0.25,
+      0.35,
+      0.25,
+      0.3,
+      0.35,
+      0.1,
+      0.1,
+      0.25
+    ]
+  },
+  "information_entropy": {
+    "mean_entropy": 1.9701449558141317,
+    "std_entropy": 0.609391733107034,
+    "min_entropy": 0.8812908992306927,
+    "max_entropy": 2.725480556997868,
+    "entropy_distribution": [
+      1.823067982273661,
+      2.2312702546075758,
+      2.1867043459100244,
+      2.59490661824394,
+      2.004886164091843,
+      2.1609640474436813,
+      2.725480556997868,
+      0.9709505944546686,
+      0.8812908992306927,
+      2.1219280948873624
+    ]
+  },
+  "pseudo_perplexity": {
+    "mean_pseudo_perplexity": 20.13883555633719,
+    "std_pseudo_perplexity": 7.366683690595011,
+    "valid_sequences": 10,
+    "method": "fallback_natural_frequency",
+    "perplexity_distribution": [
+      31.88838029172399,
+      18.950317716131483,
+      19.83745595813654,
+      14.871923434194937,
+      16.190413238846702,
+      19.76240314723929,
+      16.098642588193545,
+      34.75324956195766,
+      12.039048315325518,
+      16.996521311622235
+    ]
+  },
+  "hydropathy_index": {
+    "mean_hydropathy": -0.5186060606060606,
+    "std_hydropathy": 1.4416974316902953,
+    "min_hydropathy": -3.0599999999999996,
+    "max_hydropathy": 1.4899999999999998,
+    "hydrophobic_peptides_ratio": 0.3
+  },
+  "similarity_analysis": {
+    "mean_similarity": 0.54375,
+    "std_similarity": 0.1841129257940475,
+    "min_similarity": 0.3125,
+    "max_similarity": 1.0,
+    "novelty_ratio": 0.9,
+    "identical_matches": 1,
+    "similarity_threshold": 0.8,
+    "total_comparisons": 10,
+    "method": "edit_distance_based"
+  },
+  "diversity_analysis": {
+    "diversity_score": 8.244444444444444,
+    "unique_sequences": 10,
+    "uniqueness_ratio": 1.0,
+    "average_edit_distance": 8.244444444444444,
+    "sample_size_used": 10
+  },
+  "length_distribution": {
+    "generated_stats": {
+      "mean": 10.4,
+      "std": 0.699205898780101,
+      "min": 9,
+      "max": 11
+    },
+    "reference_stats": {
+      "mean": 14.5,
+      "std": 1.760681686165901,
+      "min": 11,
+      "max": 16
+    },
+    "mean_difference": 4.1,
+    "std_difference": 1.0614757873857998,
+    "method": "basic_statistics"
+  },
+  "condition_specificity": {
+    "antimicrobial": {
+      "sequences_count": 10,
+      "preferred_aa_ratio": [
+        0.9090909090909091,
+        1.0,
+        1.0,
+        0.45454545454545453,
+        0.9090909090909091,
+        0.8,
+        0.4444444444444444,
+        1.0,
+        1.0,
+        0.6
+      ],
+      "avoided_aa_ratio": [
+        0.0,
+        0.0,
+        0.0,
+        0.09090909090909091,
+        0.0,
+        0.1,
+        0.1111111111111111,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "length_compliance": 1.0,
+      "charge_compliance": 0.8
+    }
+  }
+}

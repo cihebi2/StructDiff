@@ -1,0 +1,230 @@
+data:
+  augmentation:
+    enable: true
+    mask_prob: 0.15
+    noise_level: 0.1
+    structure_noise: 0.05
+  batch_size: 8
+  max_length: 50
+  min_length: 5
+  num_workers: 1
+  pin_memory: false
+  prefetch_factor: 1
+  structure_cache_dir: ./data/processed/structure_cache
+  structure_prediction:
+    batch_size: 8
+    cache_predictions: true
+    method: esmfold
+  target_columns:
+    annotation: annotation
+    label: label
+    sequence: sequence
+    weight: weight
+  test_path: ./data/processed/test.csv
+  train_path: ./data/processed/train.csv
+  use_predicted_structures: true
+  val_path: ./data/processed/val.csv
+diffusion:
+  beta_end: 0.02
+  beta_start: 0.0001
+  conditioning:
+    classifier_free_guidance: true
+    guidance_scale: 1.5
+    peptide_type: true
+    structure_guidance: true
+  ddim_steps: 100
+  loss_type: mse
+  noise_schedule: alphafold3
+  num_timesteps: 1000
+  prediction_type: epsilon
+  sampling_method: ddpm
+evaluation:
+  condition_specific_evaluation:
+    condition_interpolation_test: true
+    condition_transfer_evaluation: true
+    enabled: true
+    evaluate_per_condition: true
+  generation:
+    guidance_scale: 1.5
+    num_samples: 200
+    temperature: 1.0
+    top_p: 0.9
+  metrics:
+  - perplexity
+  - accuracy
+  - structure_consistency
+  - diversity
+  - peptide_properties
+experiment:
+  checkpoint_dir: ./checkpoints
+  log_dir: ./logs
+  name: peptide_adaptive_conditioning
+  output_dir: ./outputs
+  project: StructDiff-AdaptiveConditioning
+  seed: 42
+logging:
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  level: INFO
+  log_every: 50
+  save_every: 100
+loss_weights:
+  auxiliary_loss: 0.05
+  classification_loss: 0.1
+  diffusion_loss: 1.0
+  structure_consistency_loss: 0.2
+memory_optimization:
+  cleanup_frequency: 50
+  disable_esmfold_in_eval: true
+  generation_batch_size: 4
+  gradient_checkpointing: true
+model:
+  adaptive_conditioning:
+    biological_initialization:
+      antifungal_bias: 0.0
+      antimicrobial_bias: 0.5
+      antiviral_bias: -0.2
+      unconditioned_bias: 0.0
+    condition_dim_ratio: 0.5
+    dropout: 0.1
+    enabled: true
+    multi_aspect_control:
+      charge_control: true
+      fine_grained_modulation: true
+      functional_control: true
+      hydrophobic_control: true
+      structure_control: true
+    num_condition_types: 4
+    strength_control:
+      adaptive_strength_learning: true
+      default_strength: 1.0
+      enabled: true
+      strength_range:
+      - 0.1
+      - 2.0
+    zero_initialization:
+      condition_networks_zero_init: true
+      fine_gate_bias: -3.0
+      primary_gate_bias: -2.0
+  denoiser:
+    conditional_zero_init: true
+    dropout: 0.1
+    enhanced_layer_norm: true
+    hidden_dim: 256
+    num_heads: 8
+    num_layers: 6
+    use_adaptive_conditioning: true
+    use_cross_attention: true
+    use_rotary_embeddings: true
+  sequence_encoder:
+    freeze_encoder: false
+    lora_alpha: 32
+    lora_dropout: 0.1
+    lora_rank: 16
+    pretrained_model: facebook/esm2_t6_8M_UR50D
+    use_lora: true
+  structure_encoder:
+    esmfold_config:
+      cache_results: true
+      chunk_size: 128
+      model_name: facebook/esmfold_v1
+      use_fp16: true
+    fusion:
+      hidden_dim: 320
+      method: attention
+    global:
+      dropout: 0.1
+      hidden_dim: 512
+      num_attention_heads: 8
+      num_layers: 6
+    hidden_dim: 320
+    local:
+      dropout: 0.1
+      hidden_dim: 320
+      kernel_sizes:
+      - 3
+      - 5
+      - 7
+      - 9
+      num_layers: 4
+    type: multi_scale
+    use_esmfold: true
+  type: StructDiff
+special:
+  esmfold_memory_management:
+    clear_cache_every: 100
+    enable_gradient_checkpointing: true
+    max_cache_size: 1000
+  peptide_specific:
+    class_names:
+    - antimicrobial
+    - antifungal
+    - antiviral
+    class_weights:
+    - 1.0
+    - 1.2
+    - 1.5
+    enable_functional_classification: true
+    enable_secondary_structure_loss: true
+system:
+  benchmark: false
+  cuda_visible_devices: '0'
+  deterministic: true
+  mixed_precision: true
+training:
+  amp_dtype: float16
+  conditioning_training:
+    adaptive_loss_weights:
+      condition_consistency_weight: 0.1
+      condition_smoothness_weight: 0.02
+      condition_specificity_weight: 0.05
+    condition_mixing:
+      enabled: true
+      mixing_probability: 0.1
+      unconditioned_probability: 0.1
+    strength_scheduling:
+      enabled: true
+      final_strength: 1.2
+      initial_strength: 0.8
+      schedule_type: cosine
+      warmup_steps: 1000
+  early_stopping:
+    enabled: true
+    metric: val_loss
+    min_delta: 0.001
+    mode: min
+    patience: 8
+  ema_decay: 0.9999
+  ema_update_every: 5
+  gradient_accumulation_steps: 4
+  gradient_clip: 1.0
+  log_every: 50
+  max_checkpoints: 5
+  num_epochs: 50
+  optimizer:
+    betas:
+    - 0.9
+    - 0.999
+    eps: 1e-8
+    lr: 5e-5
+    type: AdamW
+    weight_decay: 0.01
+  save_every: 500
+  scheduler:
+    min_lr: 1e-6
+    num_warmup_steps: 500
+    type: cosine
+  use_amp: true
+  use_ema: true
+  validate_every: 1
+wandb:
+  enabled: true
+  entity: null
+  notes: 多肽生成训练 - 启用ESMFold结构预测
+  project: StructDiff-Peptide-ESMFold
+  tags:
+  - peptide
+  - esmfold
+  - diffusion
+  - antimicrobial
+  - antifungal
+  - antiviral

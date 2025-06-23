@@ -1,0 +1,56 @@
+# Baseline model configuration (simple diffusion without structure)
+model:
+  name: "BaselineDiffusion"
+  
+  # Model dimensions
+  hidden_dim: 512
+  intermediate_dim: 2048
+  num_attention_heads: 8
+  num_layers: 8
+  
+  # Sequence encoder
+  sequence_encoder:
+    type: "learned"  # No pretrained model
+    vocab_size: 25  # 20 amino acids + special tokens
+    embedding_dim: 512
+    max_position_embeddings: 512
+    
+  # Denoiser network (transformer)
+  denoiser:
+    hidden_dim: 512
+    num_layers: 8
+    num_attention_heads: 8
+    intermediate_dim: 2048
+    dropout: 0.1
+    
+    # Time embedding
+    time_embedding:
+      dim: 128
+      max_period: 10000
+      
+    # No structure or cross-attention modules
+    
+  # Output head
+  output_head:
+    type: "linear"
+    hidden_dim: 512
+    vocab_size: 25
+    
+  # Regularization
+  regularization:
+    dropout: 0.1
+    attention_dropout: 0.1
+    
+# Training config
+training_config:
+  loss_weights:
+    diffusion_loss: 1.0
+# Updated: 05/30/2025 22:59:09
+
+# Updated: 05/31/2025 15:11:07
+
+# Updated: 05/31/2025 15:14:04
+
+# Updated: 05/31/2025 23:30:00
+
+# Updated: 05/31/2025 23:30:18

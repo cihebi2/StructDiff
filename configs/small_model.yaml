@@ -1,0 +1,68 @@
+experiment:
+  name: "structdiff_small_test"
+  output_dir: "./outputs"
+  seed: 42
+
+model:
+  sequence_encoder:
+    path: "facebook/esm2_t6_8M_UR50D"  # 数据集需要这个键
+    pretrained_model: "facebook/esm2_t6_8M_UR50D"  # 最小的ESM模型
+    freeze_encoder: true  # 冻结以节省内存
+    use_lora: false  # 先不使用LoRA
+  
+  structure_encoder:
+    type: "multi_scale"
+    hidden_dim: 128
+    use_esmfold: true  # 先不使用ESMFold
+  
+  denoiser:
+    hidden_dim: 256
+    num_layers: 4
+    num_heads: 4
+    dropout: 0.1
+    use_cross_attention: false  # 简化模型
+
+data:
+  train_path: "./data/processed/train.csv"
+  val_path: "./data/processed/val.csv"
+  test_path: "./data/processed/test.csv"
+  batch_size: 8  # 小批量
+  max_length: 30
+  min_length: 10
+  use_predicted_structures: true  # 先不使用结构预测
+  augmentation:
+    enable: false  # 先禁用数据增强
+    mask_prob: 0.15
+
+training:
+  num_epochs: 10  # 少量epoch测试
+  gradient_accumulation_steps: 4  # 有效批量大小 = 8 * 4 = 32
+  
+  optimizer:
+    lr: 1e-4
+    weight_decay: 0.01
+  
+  scheduler:
+    type: "cosine"
+    num_warmup_steps: 100
+  
+  use_amp: true  # 混合精度训练
+  
+  save_every: 100
+  validate_every: 50
+  log_every: 10
+
+diffusion:
+  num_timesteps: 100  # 减少timesteps加快训练
+  noise_schedule: "linear"
+  beta_start: 0.0001
+  beta_end: 0.02
+
+training_config:
+  loss_weights:
+    diffusion_loss: 1.0
+    structure_consistency_loss: 0.1  # 启用结构一致性损失
+    auxiliary_loss: 0.0
+
+wandb:
+  enabled: false  # 先不使用wandb

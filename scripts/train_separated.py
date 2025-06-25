@@ -230,7 +230,8 @@ def main():
         })
         logger.warning("使用默认配置")
     
-    # 创建训练配置
+    # 创建训练配置 - 从配置文件读取评估设置
+    evaluation_config = config.get('evaluation', {})
     training_config = SeparatedTrainingConfig(
         data_dir=args.data_dir,
         output_dir=args.output_dir,
@@ -238,7 +239,14 @@ def main():
         use_cfg=args.use_cfg,
         use_length_control=args.use_length_control,
         use_amp=args.use_amp,
-        use_ema=args.use_ema
+        use_ema=args.use_ema,
+        # 评估配置
+        enable_evaluation=evaluation_config.get('enabled', True),
+        evaluate_every=evaluation_config.get('evaluate_every', 5),
+        evaluation_metrics=evaluation_config.get('metrics', None),
+        evaluation_num_samples=evaluation_config.get('generation', {}).get('num_samples', 1000),
+        evaluation_guidance_scale=evaluation_config.get('generation', {}).get('guidance_scale', 2.0),
+        auto_generate_after_training=True  # 默认启用
     )
     
     # 命令行参数覆盖配置
@@ -284,7 +292,8 @@ def main():
             config=training_config,
             model=model,
             diffusion=diffusion,
-            device=device
+            device=device,
+            tokenizer=tokenizer
         )
         logger.info("✓ 创建训练管理器成功")
         

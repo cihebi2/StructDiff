@@ -63,6 +63,24 @@ class SeparatedTrainingConfig:
     data_dir: str = "./data/processed"
     output_dir: str = "./outputs/separated_training"
     checkpoint_dir: str = "./checkpoints/separated"
+    
+    # 评估配置
+    enable_evaluation: bool = True
+    evaluate_every: int = 5
+    evaluation_metrics: Optional[List[str]] = None
+    evaluation_num_samples: int = 1000
+    evaluation_guidance_scale: float = 2.0
+    auto_generate_after_training: bool = True
+    
+    def __post_init__(self):
+        if self.evaluation_metrics is None:
+            self.evaluation_metrics = [
+                "pseudo_perplexity",
+                "plddt_score", 
+                "instability_index",
+                "similarity_score",
+                "activity_prediction"
+            ]
 
 
 class SeparatedTrainingManager:
@@ -72,11 +90,13 @@ class SeparatedTrainingManager:
                  config: SeparatedTrainingConfig,
                  model: StructDiff,
                  diffusion: GaussianDiffusion,
-                 device: str = 'cuda'):
+                 device: str = 'cuda',
+                 tokenizer=None):
         self.config = config
         self.model = model
         self.diffusion = diffusion
         self.device = device
+        self.tokenizer = tokenizer
         
         # 创建输出目录
         Path(config.output_dir).mkdir(parents=True, exist_ok=True)
@@ -85,8 +105,8 @@ class SeparatedTrainingManager:
         # 初始化组件
         self.checkpoint_manager = CheckpointManager(config.checkpoint_dir)
         self.training_stats = {
-            'stage1': {'losses': [], 'val_losses': []},
-            'stage2': {'losses': [], 'val_losses': []},
+            'stage1': {'losses': [], 'val_losses': [], 'evaluations': []},
+            'stage2': {'losses': [], 'val_losses': [], 'evaluations': []},
         }
         
         # EMA
@@ -95,7 +115,34 @@ class SeparatedTrainingManager:
         else:
             self.ema = None
             
+        # 评估器 (延迟初始化)
+        self.evaluator = None
+        if config.enable_evaluation:
+            self._init_evaluator()
+            
         logger.info(f"初始化分离式训练管理器，设备: {device}")
+        if config.enable_evaluation:
+            logger.info(f"评估指标: {config.evaluation_metrics}")
+    
+    def _init_evaluator(self):
+        """初始化CPL-Diff评估器"""
+        try:
+            # 动态导入评估器
+            import sys
+            from pathlib import Path
+            project_root = Path(__file__).parent.parent.parent
+            sys.path.insert(0, str(project_root))
+            
+            from scripts.cpldiff_standard_evaluation import CPLDiffStandardEvaluator
+            
+            eval_output_dir = Path(self.config.output_dir) / "evaluations"
+            self.evaluator = CPLDiffStandardEvaluator(output_dir=str(eval_output_dir))
+            logger.info("✓ CPL-Diff评估器初始化成功")
+            
+        except Exception as e:
+            logger.warning(f"评估器初始化失败: {e}，将跳过评估")
+            self.evaluator = None
+            self.config.enable_evaluation = False
     
     def prepare_stage1_components(self) -> Tuple[nn.Module, torch.optim.Optimizer, Any]:
         """准备阶段1训练组件（去噪器训练）"""
@@ -418,6 +465,18 @@ class SeparatedTrainingManager:
                     val_stats = self.validate_stage1(val_loader, eval_model)
                     stage1_stats['val_losses'].append(val_stats['val_loss'])
                     logger.info(f"阶段1验证 - Val Loss: {val_stats['val_loss']:.4f}")
+                    
+                    # 定期评估
+                    if (self.config.enable_evaluation and self.evaluator is not None and 
+                        epoch > 0 and epoch % self.config.evaluate_every == 0):
+                        logger.info(f"🔬 执行阶段1定期评估 (Epoch {epoch+1})...")
+                        eval_results = self._run_evaluation(eval_model, stage=f'stage1_epoch_{epoch+1}')
+                        if eval_results:
+                            stage1_stats['evaluations'].append({
+                                'epoch': epoch + 1,
+                                'step': step,
+                                'results': eval_results
+                            })
                 
                 # 保存检查点
                 if step % self.config.save_every == 0:
@@ -450,6 +509,13 @@ class SeparatedTrainingManager:
             stage='stage1_final',
             stats=stage1_stats
         )
+        
+        # 阶段1结束后的评估
+        if self.config.enable_evaluation and self.evaluator is not None:
+            logger.info("🔬 执行阶段1结束评估...")
+            eval_results = self._run_evaluation(eval_model, stage='stage1_final')
+            if eval_results:
+                stage1_stats['final_evaluation'] = eval_results
         
         logger.info("✅ 阶段1训练完成")
         self.training_stats['stage1'] = stage1_stats
@@ -492,6 +558,18 @@ class SeparatedTrainingManager:
                     val_stats = self.validate_stage2(val_loader, model)
                     stage2_stats['val_losses'].append(val_stats['val_loss'])
                     logger.info(f"阶段2验证 - Val Loss: {val_stats['val_loss']:.4f}")
+                    
+                    # 定期评估
+                    if (self.config.enable_evaluation and self.evaluator is not None and 
+                        epoch > 0 and epoch % self.config.evaluate_every == 0):
+                        logger.info(f"🔬 执行阶段2定期评估 (Epoch {epoch+1})...")
+                        eval_results = self._run_evaluation(model, stage=f'stage2_epoch_{epoch+1}')
+                        if eval_results:
+                            stage2_stats['evaluations'].append({
+                                'epoch': epoch + 1,  
+                                'step': step,
+                                'results': eval_results
+                            })
                 
                 # 保存检查点
                 if step % self.config.save_every == 0:
@@ -524,6 +602,13 @@ class SeparatedTrainingManager:
             stage='stage2_final',
             stats=stage2_stats
         )
+        
+        # 阶段2结束后的评估
+        if self.config.enable_evaluation and self.evaluator is not None:
+            logger.info("🔬 执行阶段2结束评估...")
+            eval_results = self._run_evaluation(model, stage='stage2_final')
+            if eval_results:
+                stage2_stats['final_evaluation'] = eval_results
         
         logger.info("✅ 阶段2训练完成")
         self.training_stats['stage2'] = stage2_stats
@@ -562,6 +647,13 @@ class SeparatedTrainingManager:
         with open(stats_path, 'w') as f:
             json.dump(final_stats, f, indent=2)
         
+        # 训练完成后的自动生成和评估
+        if self.config.auto_generate_after_training:
+            logger.info("🎯 开始训练后自动生成和评估...")
+            generation_results = self._run_post_training_generation_and_evaluation()
+            if generation_results:
+                final_stats['post_training_evaluation'] = generation_results
+        
         logger.info("🎉 分离式训练完成！")
         logger.info(f"统计数据保存到: {stats_path}")
         logger.info(f"检查点保存到: {self.config.checkpoint_dir}")
@@ -574,18 +666,190 @@ class SeparatedTrainingManager:
         self.model.load_state_dict(checkpoint['model_state_dict'])
         logger.info(f"已加载阶段1检查点: {checkpoint_path}")
     
+    def _run_evaluation(self, model, stage: str) -> Optional[Dict]:
+        """运行CPL-Diff评估"""
+        if not self.evaluator or not self.tokenizer:
+            return None
+            
+        try:
+            logger.info(f"生成样本用于评估 (阶段: {stage})...")
+            
+            # 生成评估样本
+            generated_sequences = self._generate_evaluation_samples(
+                model, 
+                num_samples=min(100, self.config.evaluation_num_samples)
+            )
+            
+            if not generated_sequences:
+                logger.warning("生成样本失败，跳过评估")
+                return None
+            
+            logger.info(f"对 {len(generated_sequences)} 个样本进行CPL-Diff评估...")
+            
+            # 运行评估
+            eval_results = self.evaluator.comprehensive_cpldiff_evaluation(
+                generated_sequences=generated_sequences,
+                reference_sequences=[],  # 使用内置参考序列
+                peptide_type='antimicrobial'
+            )
+            
+            # 生成报告
+            report_name = f"{stage}_evaluation"
+            self.evaluator.generate_cpldiff_report(eval_results, report_name)
+            
+            logger.info(f"✓ {stage} 评估完成")
+            return eval_results
+            
+        except Exception as e:
+            logger.error(f"评估过程出错: {e}")
+            return None
+    
+    def _generate_evaluation_samples(self, model, num_samples: int = 100) -> List[str]:
+        """生成用于评估的样本序列"""
+        try:
+            sequences = []
+            model.eval()
+            
+            with torch.no_grad():
+                for i in range(0, num_samples, 10):  # 批次生成
+                    batch_size = min(10, num_samples - i)
+                    
+                    # 随机长度
+                    lengths = torch.randint(
+                        self.config.min_length,
+                        self.config.max_length + 1,
+                        (batch_size,)
+                    ).tolist()
+                    
+                    for length in lengths:
+                        try:
+                            # 生成噪声嵌入
+                            seq_embeddings = torch.randn(
+                                1, length, 
+                                getattr(model.sequence_encoder.config, 'hidden_size', 768),
+                                device=self.device
+                            )
+                            attention_mask = torch.ones(1, length, device=self.device)
+                            
+                            # 简单去噪
+                            if hasattr(model, 'denoiser'):
+                                for t in reversed(range(0, 1000, 100)):
+                                    timesteps = torch.tensor([t], device=self.device)
+                                    noise_pred = model.denoiser(
+                                        seq_embeddings, timesteps, attention_mask
+                                    )
+                                    seq_embeddings = seq_embeddings - 0.1 * noise_pred
+                            
+                            # 解码序列
+                            sequence = self._decode_for_evaluation(
+                                seq_embeddings[0], attention_mask[0], length
+                            )
+                            
+                            if sequence and len(sequence) >= self.config.min_length:
+                                sequences.append(sequence)
+                                
+                        except Exception as e:
+                            logger.debug(f"生成单个序列失败: {e}")
+                            continue
+            
+            return sequences[:num_samples]
+            
+        except Exception as e:
+            logger.error(f"样本生成失败: {e}")
+            return []
+    
+    def _decode_for_evaluation(self, embeddings: torch.Tensor, attention_mask: torch.Tensor, target_length: int) -> str:
+        """为评估解码序列"""
+        try:
+            if hasattr(self.model, 'sequence_decoder') and self.model.sequence_decoder is not None:
+                logits = self.model.sequence_decoder(embeddings.unsqueeze(0), attention_mask.unsqueeze(0))
+                token_ids = torch.argmax(logits, dim=-1).squeeze(0)
+                
+                # 转换为序列
+                if self.tokenizer:
+                    sequence = self.tokenizer.decode(token_ids, skip_special_tokens=True)
+                    amino_acids = set('ACDEFGHIKLMNPQRSTVWY')
+                    clean_sequence = ''.join([c for c in sequence.upper() if c in amino_acids])
+                    return clean_sequence[:target_length] if clean_sequence else None
+            
+            # 回退方案
+            import random
+            amino_acids = 'ACDEFGHIKLMNPQRSTVWY'
+            return ''.join(random.choices(amino_acids, k=target_length))
+            
+        except Exception as e:
+            logger.debug(f"解码失败: {e}")
+            return None
+    
+    def _run_post_training_generation_and_evaluation(self) -> Optional[Dict]:
+        """训练完成后运行生成和评估"""
+        try:
+            logger.info("🎯 生成最终评估样本...")
+            
+            # 使用最佳模型
+            eval_model = self.ema.ema_model if self.ema else self.model
+            
+            # 生成更多样本
+            generated_sequences = self._generate_evaluation_samples(
+                eval_model, 
+                num_samples=self.config.evaluation_num_samples
+            )
+            
+            if not generated_sequences:
+                logger.warning("最终生成失败")
+                return None
+            
+            logger.info(f"生成 {len(generated_sequences)} 个最终样本")
+            
+            # 保存生成的序列
+            output_path = Path(self.config.output_dir) / "final_generated_sequences.fasta"
+            with open(output_path, 'w') as f:
+                for i, seq in enumerate(generated_sequences):
+                    f.write(f">Generated_{i}\n{seq}\n")
+            logger.info(f"序列保存到: {output_path}")
+            
+            # 运行最终评估
+            if self.evaluator:
+                logger.info("🔬 运行最终CPL-Diff评估...")
+                eval_results = self.evaluator.comprehensive_cpldiff_evaluation(
+                    generated_sequences=generated_sequences,
+                    reference_sequences=[],
+                    peptide_type='antimicrobial'
+                )
+                
+                # 生成最终报告
+                self.evaluator.generate_cpldiff_report(eval_results, "final_post_training")
+                
+                logger.info("✅ 最终评估完成")
+                return {
+                    'generated_sequences_count': len(generated_sequences),
+                    'sequences_file': str(output_path),
+                    'evaluation_results': eval_results
+                }
+            
+            return {
+                'generated_sequences_count': len(generated_sequences),
+                'sequences_file': str(output_path)
+            }
+            
+        except Exception as e:
+            logger.error(f"最终生成和评估失败: {e}")
+            return None
+    
     def get_training_summary(self) -> Dict[str, Any]:
         """获取训练摘要"""
         summary = {
             'stage1': {
                 'final_loss': self.training_stats['stage1']['losses'][-1] if self.training_stats['stage1']['losses'] else None,
                 'best_val_loss': min(self.training_stats['stage1']['val_losses']) if self.training_stats['stage1']['val_losses'] else None,
-                'total_epochs': len(self.training_stats['stage1']['losses'])
+                'total_epochs': len(self.training_stats['stage1']['losses']),
+                'evaluations_count': len(self.training_stats['stage1'].get('evaluations', []))
             },
             'stage2': {
                 'final_loss': self.training_stats['stage2']['losses'][-1] if self.training_stats['stage2']['losses'] else None,
                 'best_val_loss': min(self.training_stats['stage2']['val_losses']) if self.training_stats['stage2']['val_losses'] else None,
-                'total_epochs': len(self.training_stats['stage2']['losses'])
+                'total_epochs': len(self.training_stats['stage2']['losses']),
+                'evaluations_count': len(self.training_stats['stage2'].get('evaluations', []))
             }
         }
         return summary

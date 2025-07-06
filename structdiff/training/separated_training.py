@@ -623,11 +623,19 @@ class SeparatedTrainingManager:
         # 保存配置
         config_path = Path(self.config.output_dir) / "training_config.json"
         with open(config_path, 'w') as f:
-            # 将dataclass转换为dict
-            config_dict = {
-                field.name: getattr(self.config, field.name)
-                for field in self.config.__dataclass_fields__.values()
-            }
+            # 将dataclass转换为dict，确保所有值都是JSON可序列化的
+            config_dict = {}
+            for field in self.config.__dataclass_fields__.values():
+                value = getattr(self.config, field.name)
+                # 处理可能的OmegaConf对象
+                if hasattr(value, '__iter__') and not isinstance(value, (str, bytes)):
+                    try:
+                        # 尝试转换为列表
+                        config_dict[field.name] = list(value)
+                    except:
+                        config_dict[field.name] = str(value)
+                else:
+                    config_dict[field.name] = value
             json.dump(config_dict, f, indent=2)
         
         # 阶段1：去噪器训练

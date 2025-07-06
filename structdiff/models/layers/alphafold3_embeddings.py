@@ -237,17 +237,22 @@ class AF3AdaptiveConditioning(nn.Module):
     def _init_condition_patterns(self):
         """Initialize condition embeddings with biologically-inspired patterns"""
         with torch.no_grad():
-            # Antimicrobial: positive charge and amphipathic pattern
-            self.condition_embedding.weight[0].normal_(0.5, 0.1)  # Positive bias for cationic AMPs
+            # Only initialize patterns for the actual number of condition types
+            if self.num_condition_types >= 1:
+                # Class 0: positive charge and amphipathic pattern
+                self.condition_embedding.weight[0].normal_(0.5, 0.1)  # Positive bias for cationic AMPs
             
-            # Antifungal: balanced amphipathic pattern  
-            self.condition_embedding.weight[1].normal_(0.0, 0.15)  # Neutral with variability
+            if self.num_condition_types >= 2:
+                # Class 1: balanced amphipathic pattern  
+                self.condition_embedding.weight[1].normal_(0.0, 0.15)  # Neutral with variability
             
-            # Antiviral: hydrophobic-positive pattern with larger peptides
-            self.condition_embedding.weight[2].normal_(-0.2, 0.12)  # Slight hydrophobic bias
+            if self.num_condition_types >= 3:
+                # Class 2: hydrophobic-positive pattern with larger peptides
+                self.condition_embedding.weight[2].normal_(-0.2, 0.12)  # Slight hydrophobic bias
             
-            # Unconditioned: neutral baseline
-            self.condition_embedding.weight[3].zero_()
+            if self.num_condition_types >= 4:
+                # Unconditioned: neutral baseline (only if we have 4+ classes)
+                self.condition_embedding.weight[3].zero_()
     
     def forward(self, condition_indices: torch.Tensor, strength_modifier: Optional[torch.Tensor] = None) -> dict:
         """
@@ -260,6 +265,12 @@ class AF3AdaptiveConditioning(nn.Module):
         Returns:
             Dictionary of conditioning signals for different aspects
         """
+        # Ensure condition_indices is on the same device as the embedding layer
+        condition_indices = condition_indices.to(self.condition_embedding.weight.device)
+        
+        # Clamp condition indices to valid range to prevent CUDA assert errors
+        condition_indices = torch.clamp(condition_indices, 0, self.num_condition_types - 1)
+        
         # Basic condition embedding
         cond_emb = self.condition_embedding(condition_indices)
         

@@ -56,17 +56,19 @@ class StructureAwareDenoiser(nn.Module, CFGTrainingMixin):
         
         # Multi-aspect adaptive conditioning
         # Support for unconditional token (-1) in CFG
-        num_condition_types = 5 if self.use_cfg else 4  # Add unconditional type for CFG
+        # Data has 3 classes (0, 1, 2), so we use 3 + 1 for unconditional
+        num_condition_types = 4 if self.use_cfg else 3  # Add unconditional type for CFG
         self.adaptive_conditioning = AF3AdaptiveConditioning(
             hidden_dim=self.hidden_dim,
             condition_dim=self.hidden_dim // 2,  # Condition dimension
-            num_condition_types=num_condition_types,  # antimicrobial, antifungal, antiviral, general, unconditioned
+            num_condition_types=num_condition_types,  # antimicrobial, antifungal, antiviral, unconditioned
             dropout=self.dropout
         )
         
         # Fallback simple condition embedding for compatibility
         # Support unconditional class for CFG
-        num_classes = 5 if self.use_cfg else 4  # Add unconditional class for CFG
+        # Data has 3 classes (0, 1, 2), so we use 3 + 1 for unconditional
+        num_classes = 4 if self.use_cfg else 3  # Add unconditional class for CFG
         self.condition_embedding = ConditionEmbedding(
             num_classes=num_classes,
             hidden_dim=self.hidden_dim,
@@ -278,7 +280,7 @@ class StructureAwareDenoiser(nn.Module, CFGTrainingMixin):
             peptide_type = processed['peptide_type']
             # Map -1 (unconditional) to the last class index
             if self.use_cfg:
-                peptide_type = torch.where(peptide_type == -1, 4, peptide_type)  # 4 is unconditional class
+                peptide_type = torch.where(peptide_type == -1, 3, peptide_type)  # 3 is unconditional class (0,1,2,3)
             processed['peptide_type'] = peptide_type
         
         return processed

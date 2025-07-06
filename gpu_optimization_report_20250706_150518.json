@@ -1,0 +1,99 @@
+{
+  "timestamp": "20250706_150518",
+  "analysis": {
+    "gpu_info": {
+      "index": 1,
+      "name": "NVIDIA GeForce RTX 4090",
+      "memory_used": 18621,
+      "memory_total": 24564,
+      "utilization": 22,
+      "power_draw": 85.88,
+      "power_limit": 450.0,
+      "temperature": 43
+    },
+    "bottlenecks": [
+      "GPU\u5229\u7528\u7387\u8fc7\u4f4e",
+      "GPU\u529f\u7387\u4f7f\u7528\u4e0d\u8db3"
+    ],
+    "optimizations": [
+      "\u589e\u52a0\u6279\u6b21\u5927\u5c0f (batch_size)",
+      "\u542f\u7528\u6df7\u5408\u7cbe\u5ea6\u8bad\u7ec3 (AMP)",
+      "\u589e\u52a0\u6570\u636e\u52a0\u8f7d\u5668\u5de5\u4f5c\u8fdb\u7a0b\u6570 (num_workers)",
+      "\u542f\u7528\u5185\u5b58\u56fa\u5b9a (pin_memory=True)",
+      "\u589e\u52a0\u8ba1\u7b97\u5bc6\u5ea6",
+      "\u4f18\u5316\u6570\u636e\u52a0\u8f7d\u6d41\u6c34\u7ebf",
+      "\u51cf\u5c11CPU-GPU\u540c\u6b65\u7b49\u5f85"
+    ],
+    "processes": [
+      {
+        "pid": 29424,
+        "name": "python",
+        "gpu_memory": 1222,
+        "command": "python -u MMPK_fintune.py",
+        "cpu_percent": 0.0,
+        "memory_percent": 1.995369979959334
+      },
+      {
+        "pid": 33215,
+        "name": "/home/xmli/anaconda3/envs/unimol/bin/python",
+        "gpu_memory": 2666,
+        "command": "/home/xmli/anaconda3/envs/unimol/bin/python -m ipykernel_launcher -f /home/xmli/.local/share/jupyter/runtime/kernel-b0738247-3001-4bf7-8981-d329f3349c58.json",
+        "cpu_percent": 0.0,
+        "memory_percent": 0.23213073980593224
+      },
+      {
+        "pid": 24494,
+        "name": "python",
+        "gpu_memory": 2574,
+        "command": "python evaluate.py",
+        "cpu_percent": 0.0,
+        "memory_percent": 0.17475336861966512
+      },
+      {
+        "pid": 54486,
+        "name": "python",
+        "gpu_memory": 18114,
+        "command": "python full_train_with_structure_features_fixed_v2.py",
+        "cpu_percent": 0.0,
+        "memory_percent": 0.87528851993042
+      },
+      {
+        "pid": 1658,
+        "name": "python",
+        "gpu_memory": 7686,
+        "command": "python predict.py --model 2 --esm2 650M --esm2_path /home/qlyu/workdata/esm2_t33_650M_UR50D --json_path /home/qlyu/software/DeepNano/source/final_nanobody_datasets/complete_nanobody_dataset.json --output_path ./output/screening_results_final_dataset_model2_HCAR1_650M.csv",
+        "cpu_percent": 0.0,
+        "memory_percent": 1.3220635986953835
+      },
+      {
+        "pid": 2171,
+        "name": "python",
+        "gpu_memory": 7978,
+        "command": "python predict.py --model 2 --esm2 650M --esm2_path /home/qlyu/workdata/esm2_t33_650M_UR50D --json_path /home/qlyu/software/DeepNano/source/final_nanobody_datasets/complete_nanobody_dataset.json --output_path ./output/screening_results_final_dataset_model2_HCAR2_650M.csv --antigen_id HCAR2_HUMAN --antigen_seq MNRHHLQDHFLEIDKKNCCVFRDDFIVKVLPPVLGLEFIFGLLGNGLALWIFCFHLKSWKSSRIFLFNLAVADFLLIICLPFLMDNYVRRWDWKFGDIPCRLMLFMLAMNRQGSIIFLTVVAVDRYFRVVHPHHALNKISNRTAAIISCLLWGITIGLTVHLLKKKMPIQNGGANLCSSFSICHTFQWHEAMFLLEFFLPLGIILFCSARIIWSLRQRQMDRHAKIKRAITFIMVVAIVFVICFLPSVVVRIRIFWLLHTSGTQNCEVYRSVDLAFFITLSFTYMNSMLDPVVYYFSSPSFPNFFSTLINRCLQRKMTGEPDNNRSTSVELTGDPNKTRGAPEALMANSGEPWSPSYLGPTSP",
+        "cpu_percent": 0.0,
+        "memory_percent": 1.3266983474528977
+      }
+    ]
+  },
+  "config_suggestions": {
+    "training": {
+      "batch_size": 8,
+      "gradient_accumulation_steps": 2,
+      "num_workers": 4,
+      "pin_memory": true,
+      "prefetch_factor": 2,
+      "use_amp": true,
+      "persistent_workers": true
+    },
+    "model": {
+      "gradient_checkpointing": true,
+      "compile_model": true
+    },
+    "optimization": {
+      "optimizer": "AdamW",
+      "learning_rate": 0.0001,
+      "weight_decay": 0.01,
+      "grad_clip_norm": 1.0
+    }
+  }
+}

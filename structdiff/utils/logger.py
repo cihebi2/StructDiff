@@ -1,6 +1,7 @@
 import logging
 import sys
 from typing import Optional
+import os
 
 
 def setup_logger(
@@ -11,6 +12,10 @@ def setup_logger(
     handlers = [logging.StreamHandler(sys.stdout)]
     
     if log_file:
+        # Ensure the directory for the log file exists
+        log_dir = os.path.dirname(log_file)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
         handlers.append(logging.FileHandler(log_file))
     
     logging.basicConfig(

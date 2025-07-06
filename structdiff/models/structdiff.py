@@ -34,23 +34,17 @@ class StructDiff(nn.Module):
         
         # Initialize structure encoder
         self.structure_encoder = MultiScaleStructureEncoder(
-            config.model.structure_encoder
+            config.structure_encoder
         )
         
         # Initialize denoiser with cross-attention
         self.denoiser = StructureAwareDenoiser(
             seq_hidden_dim=self.seq_hidden_dim,
-            struct_hidden_dim=config.model.structure_encoder.hidden_dim,
-            denoiser_config=config.model.denoiser
+            struct_hidden_dim=config.structure_encoder.hidden_dim,
+            denoiser_config=config.denoiser
         )
         
-        # Initialize diffusion process
-        self.diffusion = GaussianDiffusion(
-            num_timesteps=config.diffusion.num_timesteps,
-            noise_schedule=config.diffusion.noise_schedule,
-            beta_start=config.diffusion.beta_start,
-            beta_end=config.diffusion.beta_end
-        )
+        # Note: Diffusion process is handled externally in training script
         
         # Loss weights - handle both old and new config formats
         if hasattr(config, 'training_config') and hasattr(config.training_config, 'loss_weights'):
@@ -74,11 +68,11 @@ class StructDiff(nn.Module):
         self._init_sequence_decoder()
         
         # Initialize cross-modal interaction if specified
-        if config.model.get('use_bidirectional_attention', False):
+        if config.get('use_bidirectional_attention', False):
             self.cross_modal_attention = BiDirectionalCrossAttention(
                 hidden_dim=self.seq_hidden_dim,
-                num_heads=config.model.denoiser.num_heads,
-                dropout=config.model.denoiser.dropout
+                num_heads=config.denoiser.num_heads,
+                dropout=config.denoiser.dropout
             )
         else:
             self.cross_modal_attention = None
@@ -87,7 +81,7 @@ class StructDiff(nn.Module):
     
     def _init_sequence_encoder(self):
         """Initialize ESM-2 sequence encoder"""
-        model_name = self.config.model.sequence_encoder.pretrained_model
+        model_name = self.config.sequence_encoder.pretrained_model
         
         # Use a smaller ESM model for testing if the specified one doesn't exist
         try:
@@ -108,11 +102,11 @@ class StructDiff(nn.Module):
         self.seq_hidden_dim = self.sequence_encoder.config.hidden_size
         
         # Apply LoRA if specified
-        if self.config.model.sequence_encoder.get('use_lora', False):
+        if self.config.sequence_encoder.get('use_lora', False):
             self._apply_lora()
         
         # Freeze encoder if specified
-        if self.config.model.sequence_encoder.freeze_encoder:
+        if self.config.sequence_encoder.freeze_encoder:
             for param in self.sequence_encoder.parameters():
                 param.requires_grad = False
                 
@@ -131,12 +125,12 @@ class StructDiff(nn.Module):
         )
         
         # Optional: Add a small transformer decoder
-        if self.config.model.get('use_decoder_layers', False):
+        if self.config.get('use_decoder_layers', False):
             decoder_layer = nn.TransformerDecoderLayer(
                 d_model=self.seq_hidden_dim,
-                nhead=self.config.model.denoiser.num_heads,
+                nhead=self.config.denoiser.num_heads,
                 dim_feedforward=self.seq_hidden_dim * 4,
-                dropout=self.config.model.denoiser.dropout,
+                dropout=self.config.denoiser.dropout,
                 batch_first=True
             )
             self.decoder_layers = nn.TransformerDecoder(
@@ -150,7 +144,7 @@ class StructDiff(nn.Module):
         """Apply LoRA to sequence encoder"""
         from .lora import apply_lora_to_model
         
-        lora_config = self.config.model.sequence_encoder
+        lora_config = self.config.sequence_encoder
         self.lora_modules = apply_lora_to_model(
             self.sequence_encoder,
             rank=lora_config.get('lora_rank', 16),
@@ -173,7 +167,7 @@ class StructDiff(nn.Module):
         device = sequences.device
         
         # Get sequence embeddings
-        with torch.no_grad() if self.config.model.sequence_encoder.freeze_encoder else torch.enable_grad():
+        with torch.no_grad() if self.config.sequence_encoder.freeze_encoder else torch.enable_grad():
             seq_outputs = self.sequence_encoder(
                 input_ids=sequences,
                 attention_mask=attention_mask,
@@ -193,15 +187,16 @@ class StructDiff(nn.Module):
         # Add positional encoding
         seq_embeddings = self.positional_encoding(seq_embeddings)
         
-        # Add noise for diffusion training
+        # Note: Noise addition is now handled externally in training script
+        # For training, we expect noisy embeddings to be provided
+        # For inference, we use clean embeddings
+        noisy_embeddings = seq_embeddings
+        noise = None
+        
+        # For training mode, we'll expect the training script to handle noise addition
         if return_loss:
+            # Generate target noise for loss computation
             noise = torch.randn_like(seq_embeddings)
-            noisy_embeddings = self.diffusion.q_sample(
-                seq_embeddings, timesteps, noise
-            )
-        else:
-            noisy_embeddings = seq_embeddings
-            noise = None
         
         # Extract structure features if available
         structure_features = None
@@ -344,11 +339,11 @@ class StructDiff(nn.Module):
                 target_structure, seq_length, batch_size, device
             )
         
-        # Get sampler
-        sampler = get_sampler(
-            sampling_method,
-            self.diffusion,
-            num_inference_steps=num_inference_steps
+        # Note: Sampling is now handled externally
+        # This method is kept for compatibility but should use external diffusion process
+        raise NotImplementedError(
+            "Sampling should be handled externally using the diffusion process. "
+            "Use the training script's generation methods instead."
         )
         
         # Create a wrapper for the denoising function
@@ -436,8 +431,8 @@ class StructDiff(nn.Module):
         structure_features = structure_features.unsqueeze(0).repeat(batch_size, 1, 1)
         
         # Project to structure encoder hidden dim
-        if structure_features.shape[-1] < self.config.model.structure_encoder.hidden_dim:
-            pad_size = self.config.model.structure_encoder.hidden_dim - structure_features.shape[-1]
+        if structure_features.shape[-1] < self.config.structure_encoder.hidden_dim:
+            pad_size = self.config.structure_encoder.hidden_dim - structure_features.shape[-1]
             structure_features = F.pad(structure_features, (0, pad_size), value=0)
         
         return structure_features

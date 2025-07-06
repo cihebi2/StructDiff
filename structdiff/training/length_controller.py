@@ -327,10 +327,36 @@ class LengthAwareDataCollator:
             result['target_lengths'] = target_lengths
             result['length_mask'] = length_mask
         
-        # 添加结构信息（如果有）
-        if 'structure' in batch[0]:
-            structures = [item['structure'] for item in batch]
-            result['structures'] = torch.stack(structures) if structures[0] is not None else None
+        # 添加结构信息（如果有）- 安全处理不同形状的结构张量
+        if 'structures' in batch[0]:
+            structures = [item.get('structures') for item in batch]
+            # 只有当所有结构都不为None且形状兼容时才尝试堆叠
+            if all(s is not None for s in structures):
+                try:
+                    # 检查是否为字典格式的结构特征
+                    if isinstance(structures[0], dict):
+                        # 处理字典格式的结构特征
+                        result['structures'] = {}
+                        for key in structures[0].keys():
+                            key_tensors = [s[key] for s in structures]
+                            # 只有形状兼容的张量才堆叠
+                            if all(t.shape == key_tensors[0].shape for t in key_tensors):
+                                result['structures'][key] = torch.stack(key_tensors)
+                            else:
+                                # 形状不匹配时跳过该键
+                                logger.warning(f"结构特征键 '{key}' 的形状不匹配，跳过堆叠")
+                    else:
+                        # 处理张量格式的结构特征
+                        if all(s.shape == structures[0].shape for s in structures):
+                            result['structures'] = torch.stack(structures)
+                        else:
+                            logger.warning("结构张量形状不匹配，跳过结构特征")
+                            result['structures'] = None
+                except Exception as e:
+                    logger.warning(f"处理结构特征时出错: {e}，跳过结构特征")
+                    result['structures'] = None
+            else:
+                result['structures'] = None
         
         return result
 

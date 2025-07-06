@@ -20,9 +20,15 @@ from transformers import AutoTokenizer
 import yaml
 from omegaconf import OmegaConf
 
-# 添加项目路径
+# 添加项目路径到Python路径
 project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+# 添加structdiff包路径
+structdiff_path = project_root / "structdiff"
+if str(structdiff_path.parent) not in sys.path:
+    sys.path.insert(0, str(structdiff_path.parent))
 
 from structdiff.models.structdiff import StructDiff
 from structdiff.diffusion.gaussian_diffusion import GaussianDiffusion
@@ -31,6 +37,9 @@ from structdiff.training.separated_training import SeparatedTrainingManager, Sep
 from structdiff.training.length_controller import create_length_controller_from_data, LengthAwareDataCollator
 from structdiff.utils.logger import setup_logger, get_logger
 from structdiff.utils.config import load_config
+
+# 全局日志记录器
+logger = get_logger(__name__)
 
 
 def parse_args():
@@ -109,7 +118,12 @@ def create_model_and_diffusion(config: Dict) -> tuple:
     model = StructDiff(config.model)
     
     # 创建扩散过程
-    diffusion = GaussianDiffusion(config.diffusion)
+    diffusion = GaussianDiffusion(
+        num_timesteps=config.diffusion.num_timesteps,
+        noise_schedule=config.diffusion.noise_schedule,
+        beta_start=config.diffusion.beta_start,
+        beta_end=config.diffusion.beta_end
+    )
     
     return model, diffusion
 
@@ -194,7 +208,6 @@ def main():
         level=logging.DEBUG if args.debug else logging.INFO,
         log_file=Path(args.output_dir) / "training.log"
     )
-    logger = get_logger(__name__)
     
     logger.info("🚀 开始分离式训练")
     logger.info(f"参数: {vars(args)}")

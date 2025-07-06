@@ -114,6 +114,9 @@ class ConditionEmbedding(nn.Module):
                 class_labels
             )
         
+        # Ensure class_labels is on the same device as the embedding layer
+        class_labels = class_labels.to(self.embeddings.weight.device)
+        
         # Get embeddings
         embeddings = self.embeddings(class_labels)
         

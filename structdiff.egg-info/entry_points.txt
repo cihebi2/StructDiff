@@ -1,0 +1,5 @@
+[console_scripts]
+structdiff-evaluate = scripts.evaluate:main
+structdiff-generate = scripts.generate:main
+structdiff-preprocess = scripts.preprocess_data:main
+structdiff-train = scripts.train:main

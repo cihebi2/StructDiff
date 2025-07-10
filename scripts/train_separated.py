@@ -50,7 +50,7 @@ def parse_args():
     parser.add_argument(
         "--config", 
         type=str, 
-        default="configs/separated_training.yaml",
+        default="configs/separated_training_production.yaml",
         help="配置文件路径"
     )
     parser.add_argument(
@@ -97,18 +97,37 @@ def parse_args():
     return parser.parse_args()
 
 
-def setup_device(device_arg: str) -> str:
-    """设置设备"""
-    if device_arg == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    else:
+def setup_device(config: Dict, device_arg: str = "auto") -> str:
+    """设置设备和GPU资源分配"""
+    # 优先使用配置文件中的设备设置
+    if hasattr(config, 'resources') and hasattr(config.resources, 'device'):
+        device = config.resources.device
+    elif device_arg != "auto":
         device = device_arg
+    else:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
     
-    if device == "cuda" and not torch.cuda.is_available():
+    if device.startswith("cuda") and not torch.cuda.is_available():
         logger.warning("CUDA不可用，回退到CPU")
         device = "cpu"
     
+    # 设置可见GPU
+    if hasattr(config, 'resources') and hasattr(config.resources, 'available_gpus'):
+        available_gpus = config.resources.available_gpus
+        # 设置CUDA_VISIBLE_DEVICES环境变量
+        import os
+        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(map(str, available_gpus))
+        logger.info(f"设置可见GPU: {available_gpus}")
+    
     logger.info(f"使用设备: {device}")
+    
+    # 如果配置了阶段特定的GPU分配，记录信息
+    if hasattr(config, 'resources'):
+        if hasattr(config.resources, 'stage1_gpus'):
+            logger.info(f"阶段1 GPU分配: {config.resources.stage1_gpus}")
+        if hasattr(config.resources, 'stage2_gpus'):
+            logger.info(f"阶段2 GPU分配: {config.resources.stage2_gpus}")
+    
     return device
 
 
@@ -154,19 +173,35 @@ def create_data_loaders(config: Dict,
         use_length_control=training_config.use_length_control
     )
     
+    # 获取数据加载配置
+    num_workers = config.data.get('num_workers', 2)
+    pin_memory = config.data.get('pin_memory', True)
+    
+    # 检查结构特征设置
+    use_structures = config.data.get('use_predicted_structures', False)
+    structure_cache_dir = config.data.get('structure_cache_dir', './cache')
+    
+    if use_structures:
+        logger.info(f"✓ 启用结构特征，缓存目录: {structure_cache_dir}")
+        if not Path(structure_cache_dir).exists():
+            logger.warning(f"结构缓存目录不存在: {structure_cache_dir}")
+    else:
+        logger.info("结构特征已禁用")
+    
     # 训练数据集
     train_dataset = PeptideStructureDataset(
         data_path=str(Path(training_config.data_dir) / "train.csv"),
         config=config,
-        is_training=True
+        is_training=True,
+        cache_dir=str(Path(structure_cache_dir) / "train") if use_structures else None
     )
     
     train_loader = DataLoader(
         train_dataset,
         batch_size=training_config.stage1_batch_size,
         shuffle=True,
-        num_workers=4,
-        pin_memory=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
         collate_fn=collator
     )
     
@@ -178,14 +213,15 @@ def create_data_loaders(config: Dict,
         val_dataset = PeptideStructureDataset(
             data_path=str(val_data_path),
             config=config,
-            is_training=False
+            is_training=False,
+            cache_dir=str(Path(structure_cache_dir) / "val") if use_structures else None
         )
         val_loader = DataLoader(
             val_dataset,
             batch_size=training_config.stage1_batch_size,
             shuffle=False,
-            num_workers=4,
-            pin_memory=True,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
             collate_fn=collator
         )
         logger.info("✓ 创建验证数据集成功")
@@ -212,8 +248,7 @@ def main():
     logger.info("🚀 开始分离式训练")
     logger.info(f"参数: {vars(args)}")
     
-    # 设置设备
-    device = setup_device(args.device)
+    # 设置设备（在加载配置之后）
     
     # 加载配置
     if Path(args.config).exists():
@@ -239,9 +274,17 @@ def main():
                 "noise_schedule": "sqrt",
                 "beta_start": 0.0001,
                 "beta_end": 0.02
+            },
+            "data": {
+                "max_length": 50,
+                "min_length": 5,
+                "use_predicted_structures": False
             }
         })
         logger.warning("使用默认配置")
+    
+    # 设置设备（在配置加载之后）
+    device = setup_device(config, args.device)
     
     # 创建训练配置 - 从配置文件读取评估设置
     evaluation_config = config.get('evaluation', {})

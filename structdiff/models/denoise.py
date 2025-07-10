@@ -271,17 +271,28 @@ class StructureAwareDenoiser(nn.Module, CFGTrainingMixin):
     def _process_conditions_for_cfg(self, conditions: Optional[Dict[str, torch.Tensor]], batch_size: int) -> Dict[str, torch.Tensor]:
         """Process conditions for CFG support"""
         if conditions is None:
-            return {'peptide_type': torch.full((batch_size,), -1, dtype=torch.long)}
+            # Use a valid default class (0) instead of -1
+            return {'peptide_type': torch.zeros((batch_size,), dtype=torch.long)}
         
         processed = conditions.copy()
         
-        # Ensure peptide_type handles unconditional case (-1)
+        # Ensure peptide_type handles unconditional case (-1) and validates ranges
         if 'peptide_type' in processed:
             peptide_type = processed['peptide_type']
-            # Map -1 (unconditional) to the last class index
+            
+            # Safety: clamp values to valid range [0, 2] for data, or [0, 3] for CFG
             if self.use_cfg:
-                peptide_type = torch.where(peptide_type == -1, 3, peptide_type)  # 3 is unconditional class (0,1,2,3)
+                # CFG mode: map -1 to 3, clamp others to [0,2]
+                peptide_type = torch.where(peptide_type == -1, 3, peptide_type)
+                peptide_type = torch.clamp(peptide_type, 0, 3)  # Valid range: [0,1,2,3]
+            else:
+                # Non-CFG mode: clamp to [0,2]
+                peptide_type = torch.clamp(peptide_type, 0, 2)  # Valid range: [0,1,2]
+            
             processed['peptide_type'] = peptide_type
+        else:
+            # Default to class 0 if no peptide_type provided
+            processed['peptide_type'] = torch.zeros((batch_size,), dtype=torch.long)
         
         return processed
 

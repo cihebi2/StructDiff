@@ -1,0 +1,149 @@
+experiment:
+  name: "structdiff_structure_enabled_v1"
+  description: "保留结构特征和交叉注意力的优化版本"
+  project: "StructDiff-StructureAware"
+  seed: 42
+
+model:
+  type: "StructDiff"
+  sequence_encoder:
+    pretrained_model: "facebook/esm2_t6_8M_UR50D"
+    freeze_encoder: false
+    use_lora: false
+  structure_encoder:
+    type: "multi_scale"
+    hidden_dim: 320  # 与ESM2完全匹配
+    use_esmfold: true  # ✅ 启用ESMFold
+    use_cache: true   # 使用缓存减少计算
+    cache_dir: "./cache"
+    memory_efficient: true  # 启用内存优化
+    batch_size_limit: 1     # ESMFold批次限制
+    
+    local:
+      hidden_dim: 320
+      num_layers: 2  # 减少层数节省内存
+      kernel_sizes: [3, 5]
+      dropout: 0.1
+    global:
+      hidden_dim: 320
+      num_attention_heads: 8  # 320 ÷ 8 = 40 (完美整除)
+      num_layers: 2
+      dropout: 0.1
+    fusion:
+      method: "attention"
+      hidden_dim: 320
+  denoiser:
+    hidden_dim: 320     # ✅ 确保与其他组件匹配
+    num_layers: 4       # 减少层数节省内存
+    num_heads: 8        # ✅ 320 ÷ 8 = 40 (完美整除)
+    dropout: 0.1
+    use_cross_attention: true  # ✅ 启用交叉注意力
+  sequence_decoder:
+    hidden_dim: 320
+    num_layers: 2  # 减少层数
+    vocab_size: 33
+    dropout: 0.1
+
+diffusion:
+  num_timesteps: 1000
+  noise_schedule: "sqrt"
+  beta_start: 0.0001
+  beta_end: 0.02
+  sampling_method: "ddpm"
+  ddim_steps: 50
+
+separated_training:
+  stage1:
+    epochs: 30      # 适度减少用于测试
+    batch_size: 1   # 最小批次避免内存问题
+    learning_rate: 1e-4
+    warmup_steps: 100
+    gradient_clip: 1.0
+    optimizer:
+      type: "AdamW"
+      weight_decay: 0.01
+      betas: [0.9, 0.999]
+      eps: 1e-8
+    scheduler:
+      type: "cosine"
+      eta_min: 1e-6
+  stage2:
+    epochs: 20
+    batch_size: 1   # 保持最小批次
+    learning_rate: 5e-5
+    warmup_steps: 50
+    gradient_clip: 0.5
+    optimizer:
+      type: "AdamW"
+      weight_decay: 0.01
+      betas: [0.9, 0.999]
+      eps: 1e-8
+    scheduler:
+      type: "cosine"
+      eta_min: 1e-6
+
+data:
+  data_dir: "./data/processed"
+  train_file: "train.csv"
+  val_file: "val.csv"
+  max_length: 50
+  min_length: 5
+  num_workers: 0        # 禁用多进程避免CUDA冲突
+  pin_memory: false     # 禁用pin_memory节省内存
+  use_predicted_structures: true  # ✅ 启用结构特征
+  structure_cache_dir: "./cache"
+
+length_control:
+  enabled: true
+  min_length: 5
+  max_length: 50
+  analyze_training_data: true
+  save_distributions: true
+  length_penalty_weight: 0.1
+
+classifier_free_guidance:
+  enabled: true
+  dropout_prob: 0.1
+  guidance_scale: 2.0
+  adaptive_guidance: true
+  guidance_schedule: "cosine"
+
+training_enhancements:
+  use_amp: false        # 禁用AMP避免复杂性
+  use_ema: false        # 禁用EMA节省内存
+  gradient_accumulation_steps: 16  # 增加梯度累积补偿小批次
+  save_every: 500
+  validate_every: 100
+  log_every: 10
+  max_checkpoints: 2
+
+evaluation:
+  enabled: false  # 训练阶段暂时禁用
+
+output:
+  base_dir: "./outputs/structure_enabled_v1"
+  checkpoint_dir: "./outputs/structure_enabled_v1/checkpoints"
+  log_dir: "./outputs/structure_enabled_v1/logs"
+  results_dir: "./outputs/structure_enabled_v1/results"
+  save_model_config: true
+  save_training_stats: true
+  save_generated_samples: true
+
+monitoring:
+  wandb:
+    enabled: false
+  tensorboard:
+    enabled: false
+
+debug:
+  enabled: true         # 启用调试信息
+  detailed_logging: true
+
+resources:
+  device: "cuda:2"
+  available_gpus: [2, 3, 4, 5]
+  stage1_gpus: [2, 3]
+  stage2_gpus: [4, 5]
+  gpu_memory_fraction: 0.6  # 限制GPU内存使用
+  allow_growth: true
+  num_threads: 2            # 减少CPU线程数 

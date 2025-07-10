@@ -251,15 +251,25 @@ class SeparatedTrainingManager:
         
         # 去噪预测
         if hasattr(model, 'denoiser'):
-            predicted_noise = model.denoiser(
+            predicted_noise_output = model.denoiser(
                 noisy_embeddings, timesteps, attention_mask,
                 structure_features=structures, conditions=conditions
             )
+            # 去噪器返回tuple (predicted_noise, cross_attention_weights)
+            if isinstance(predicted_noise_output, tuple):
+                predicted_noise, cross_attention_weights = predicted_noise_output
+            else:
+                predicted_noise = predicted_noise_output
         else:
-            predicted_noise = model(
+            predicted_noise_output = model(
                 noisy_embeddings, timesteps, attention_mask,
                 structure_features=structures, conditions=conditions
             )
+            # 处理可能的tuple返回值
+            if isinstance(predicted_noise_output, tuple):
+                predicted_noise, _ = predicted_noise_output
+            else:
+                predicted_noise = predicted_noise_output
         
         # 计算损失（预测噪声）
         loss = F.mse_loss(predicted_noise, noise)
@@ -371,15 +381,25 @@ class SeparatedTrainingManager:
                 
                 # 预测
                 if hasattr(model, 'denoiser'):
-                    predicted_noise = model.denoiser(
+                    predicted_noise_output = model.denoiser(
                         noisy_embeddings, timesteps, attention_mask,
                         structure_features=structures, conditions=conditions
                     )
+                    # 处理tuple返回值
+                    if isinstance(predicted_noise_output, tuple):
+                        predicted_noise, _ = predicted_noise_output
+                    else:
+                        predicted_noise = predicted_noise_output
                 else:
-                    predicted_noise = model(
+                    predicted_noise_output = model(
                         noisy_embeddings, timesteps, attention_mask,
                         structure_features=structures, conditions=conditions
                     )
+                    # 处理tuple返回值
+                    if isinstance(predicted_noise_output, tuple):
+                        predicted_noise, _ = predicted_noise_output
+                    else:
+                        predicted_noise = predicted_noise_output
                 
                 loss = F.mse_loss(predicted_noise, noise)
                 total_loss += loss.item()
@@ -480,14 +500,20 @@ class SeparatedTrainingManager:
                 
                 # 保存检查点
                 if step % self.config.save_every == 0:
+                    checkpoint_state = {
+                        'model': eval_model.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'scheduler': scheduler.state_dict(),
+                        'epoch': epoch,
+                        'step': step,
+                        'stage': 'stage1',
+                        'stats': stage1_stats,
+                        'config': self.config
+                    }
                     self.checkpoint_manager.save_checkpoint(
-                        model=eval_model,
-                        optimizer=optimizer,
-                        scheduler=scheduler,
+                        state_dict=checkpoint_state,
                         epoch=epoch,
-                        step=step,
-                        stage='stage1',
-                        stats=stage1_stats
+                        is_best=(step % 5000 == 0)  # 每5000步标记一次best
                     )
             
             # 记录epoch统计

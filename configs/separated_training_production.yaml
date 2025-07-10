@@ -1,0 +1,252 @@
+# StructDiff分离式训练生产配置
+# 基于CPL-Diff的两阶段训练策略，启用结构感知能力
+experiment:
+  name: "structdiff_separated_production_v1"
+  description: "生产环境分离式训练：启用ESMFold结构特征，使用预计算缓存"
+  project: "StructDiff-Production"
+  seed: 42
+
+# 模型配置 - 完整的结构感知StructDiff
+model:
+  type: "StructDiff"
+  
+  # 序列编码器配置
+  sequence_encoder:
+    pretrained_model: "facebook/esm2_t6_8M_UR50D"
+    freeze_encoder: false  # 阶段1时将被动态设置为true
+    use_lora: false        # 暂时禁用LoRA以简化实现
+    
+  # 结构编码器配置 - 启用多尺度结构特征
+  structure_encoder:
+    type: "multi_scale"
+    hidden_dim: 256
+    use_esmfold: true      # 启用ESMFold结构特征！
+    use_cache: true        # 使用预计算缓存
+    cache_dir: "./cache"   # 缓存目录
+    
+    # 局部结构特征
+    local:
+      hidden_dim: 256
+      num_layers: 3
+      kernel_sizes: [3, 5, 7]
+      dropout: 0.1
+      
+    # 全局结构特征
+    global:
+      hidden_dim: 512
+      num_attention_heads: 8
+      num_layers: 4
+      dropout: 0.1
+      
+    # 特征融合
+    fusion:
+      method: "attention"
+      hidden_dim: 256
+  
+  # 去噪器配置 - 结构感知去噪
+  denoiser:
+    hidden_dim: 320        # 匹配ESM2_t6_8M
+    num_layers: 8          
+    num_heads: 8           
+    dropout: 0.1
+    use_cross_attention: true  # 启用结构-序列交叉注意力！
+    
+  # 序列解码器配置 - 独立解码器
+  sequence_decoder:
+    hidden_dim: 320        
+    num_layers: 4          
+    vocab_size: 33         # ESM-2词汇表大小
+    dropout: 0.1
+
+# 扩散过程配置
+diffusion:
+  num_timesteps: 1000
+  noise_schedule: "sqrt"    # CPL-Diff推荐
+  beta_start: 0.0001
+  beta_end: 0.02
+  
+  # 采样配置
+  sampling_method: "ddpm"
+  ddim_steps: 50
+
+# 分离式训练配置 - 两阶段策略
+separated_training:
+  # 阶段1: 去噪器训练（固定ESM编码器）
+  stage1:
+    epochs: 50             # 生产训练轮数
+    batch_size: 2          # 减少批次大小避免内存问题
+    learning_rate: 1e-4    # CPL-Diff推荐参数
+    warmup_steps: 500
+    gradient_clip: 1.0
+    
+    # 优化器
+    optimizer:
+      type: "AdamW"
+      weight_decay: 0.01
+      betas: [0.9, 0.999]
+      eps: 1e-8
+    
+    # 学习率调度
+    scheduler:
+      type: "cosine"
+      eta_min: 1e-6
+  
+  # 阶段2: 解码器训练（固定去噪器）
+  stage2:
+    epochs: 30             
+    batch_size: 8          # 阶段2可用更大批次
+    learning_rate: 5e-5    
+    warmup_steps: 200
+    gradient_clip: 0.5
+    
+    # 优化器
+    optimizer:
+      type: "AdamW"
+      weight_decay: 0.01
+      betas: [0.9, 0.999]
+      eps: 1e-8
+    
+    # 学习率调度
+    scheduler:
+      type: "cosine"
+      eta_min: 1e-6
+
+# 数据配置
+data:
+  data_dir: "./data/processed"
+  train_file: "train.csv"
+  val_file: "val.csv"
+  test_file: "test.csv"
+  
+  # 数据处理
+  max_length: 50
+  min_length: 5
+  
+  # 数据加载优化 - 修复多进程CUDA问题
+  num_workers: 0         # 禁用多进程避免CUDA问题
+  pin_memory: true       
+  prefetch_factor: 2
+  
+  # 结构特征配置 - 启用预计算缓存！
+  use_predicted_structures: true   # 启用结构特征！
+  structure_cache_dir: "./cache"   # 使用现有缓存
+
+# 长度控制配置 - 启用精确长度控制
+length_control:
+  enabled: true
+  min_length: 5
+  max_length: 50
+  
+  # 长度分布分析
+  analyze_training_data: true
+  save_distributions: true
+  
+  # 长度惩罚
+  length_penalty_weight: 0.1
+  
+  # 肽段类型特定长度偏好
+  type_specific_lengths:
+    antimicrobial: [20, 8]    # [mean, std]
+    antifungal: [25, 10]
+    antiviral: [30, 12]
+    general: [25, 5]
+
+# 分类器自由引导配置 - 启用CFG
+classifier_free_guidance:
+  enabled: true
+  dropout_prob: 0.1         # 训练时条件丢弃概率
+  guidance_scale: 2.0       # 推理时引导强度
+  
+  # 高级配置
+  adaptive_guidance: true   
+  guidance_schedule: "cosine"
+
+# 训练增强配置
+training_enhancements:
+  # 混合精度训练
+  use_amp: true
+  amp_dtype: "float16"
+  
+  # 指数移动平均
+  use_ema: true             # 启用EMA
+  ema_decay: 0.9999
+  ema_update_every: 10
+  
+  # 梯度累积
+  gradient_accumulation_steps: 2
+  
+  # 检查点和日志
+  save_every: 1000
+  validate_every: 500
+  log_every: 100
+  max_checkpoints: 5
+
+# 评估配置 - CPL-Diff标准评估
+evaluation:
+  enabled: true
+  
+  # CPL-Diff标准评估指标
+  metrics:
+    - pseudo_perplexity     # ESM-2伪困惑度
+    - information_entropy   # 信息熵
+    - novelty_ratio        # 新颖性比例
+    - structure_plausibility # 结构合理性
+    - activity_prediction   # 活性预测
+  
+  # 生成配置
+  generation:
+    num_samples: 1000       # 生产评估样本数
+    guidance_scale: 2.0
+    temperature: 1.0
+    use_length_control: true
+    
+  # 评估频率
+  evaluate_every: 5         # 每5个epoch评估一次
+
+# 输出配置
+output:
+  base_dir: "./outputs/separated_production_v1"
+  checkpoint_dir: "./outputs/separated_production_v1/checkpoints"
+  log_dir: "./outputs/separated_production_v1/logs"
+  results_dir: "./outputs/separated_production_v1/results"
+  
+  # 保存配置
+  save_model_config: true
+  save_training_stats: true
+  save_generated_samples: true
+
+# 监控配置
+monitoring:
+  # Weights & Biases
+  wandb:
+    enabled: false          # 可选启用
+    project: "StructDiff-Production"
+    entity: null
+    tags: ["separated-training", "structure-aware", "production"]
+    
+  # TensorBoard
+  tensorboard:
+    enabled: true
+    log_dir: "./outputs/separated_production_v1/tensorboard"
+
+# 调试和开发配置
+debug:
+  enabled: false
+  detailed_logging: true
+
+# 资源配置 - 多GPU支持
+resources:
+  # GPU配置 - 使用可用的GPU 2,3,4,5
+  device: "cuda:2"           # 主GPU
+  available_gpus: [2, 3, 4, 5]  # 可用GPU列表
+  
+  # 阶段特定GPU分配
+  stage1_gpus: [2, 3]        # 阶段1使用GPU 2,3
+  stage2_gpus: [4, 5]        # 阶段2使用GPU 4,5
+  
+  # 内存配置
+  gpu_memory_fraction: 0.9
+  allow_growth: true
+  
+  # CPU配置
+  num_threads: 8 

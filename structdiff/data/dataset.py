@@ -1,5 +1,6 @@
 import os
 import pickle
+import hashlib
 from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import numpy as np
@@ -23,15 +24,14 @@ class PeptideStructureDataset(Dataset):
         data_path: str,
         config: Dict,
         is_training: bool = True,
-        cache_dir: Optional[str] = None,
-        shared_esmfold: Optional[object] = None  # 新增：接受外部ESMFold实例
+        cache_dir: Optional[str] = None,  # No longer used, kept for compatibility
+        shared_esmfold: Optional[object] = None
     ):
         self.config = config
         self.is_training = is_training
         self.max_length = config.data.max_length
         self.min_length = config.data.get('min_length', 8)
         self.use_predicted_structures = config.data.get('use_predicted_structures', False)
-        self.cache_dir = cache_dir or f"./cache/{'train' if is_training else 'val'}"
         
         # 外部ESMFold实例优先级最高
         self.structure_predictor = shared_esmfold
@@ -50,30 +50,16 @@ class PeptideStructureDataset(Dataset):
         else:
             raise ValueError(f"Unsupported file format: {data_path}")
         
-        # Initialize structure predictor only if not provided externally
-        if self.use_predicted_structures and self.structure_predictor is None:
-            logger.info("Initializing ESMFold for structure prediction...")
-            try:
-                from ..models.esmfold_wrapper import ESMFoldWrapper
-                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-                self.structure_predictor = ESMFoldWrapper(device=device)
-                
-                if self.structure_predictor.available:
-                    logger.info("✓ ESMFold 模型加载完成")
-                else:
-                    logger.warning("❌ ESMFold 初始化失败")
-                    self.structure_predictor = None
-                    self.use_predicted_structures = False
-                    
-            except Exception as e:
-                logger.error(f"❌ ESMFold 初始化失败: {e}")
-                self.structure_predictor = None
-                self.use_predicted_structures = False
-        elif self.structure_predictor is not None:
-            logger.info("✓ 使用外部提供的 ESMFold 实例")
+        # Structure predictor is no longer initialized here.
+        # It is assumed that features are pre-computed.
+        if self.use_predicted_structures:
+            logger.info("预计算的结构特征已启用。将从缓存加载。")
+            self.structure_predictor = None # Ensure no dynamic prediction
+        else:
+            logger.info("结构特征未启用。")
         
-        # Setup cache
-        os.makedirs(self.cache_dir, exist_ok=True)
+        # The cache directory is now determined by the _get_structure_features method
+        # to match the pre-computation script's logic. No need to create a directory here.
         
         # Filter sequences by length
         self.data = self.data[
@@ -130,36 +116,28 @@ class PeptideStructureDataset(Dataset):
         sequence: str,
         idx: int
     ) -> Optional[Dict[str, torch.Tensor]]:
-        """Get or compute structure features for a sequence"""
-        # Check cache first
-        cache_path = os.path.join(
-            self.cache_dir,
-            f"{idx}_{sequence[:10]}.pkl"
-        )
-        
-        if os.path.exists(cache_path):
-            try:
-                with open(cache_path, 'rb') as f:
-                    return pickle.load(f)
-            except Exception as e:
-                logger.warning(f"Could not load cached structure: {e}")
-        
-        # Predict structure if needed
-        if (self.use_predicted_structures and 
-            self.structure_predictor is not None and 
-            self.structure_predictor.available):
-            try:
-                structure_features = self.structure_predictor.predict_structure(sequence)
-                
-                # Cache the results
-                with open(cache_path, 'wb') as f:
-                    pickle.dump(structure_features, f)
-                
-                return structure_features
-            except Exception as e:
-                logger.warning(f"Could not predict structure for sequence {idx}: {e}")
-        
-        return None
+        """Get structure features from pre-computed cache."""
+        if not self.use_predicted_structures:
+            return None
+
+        # Use the same hashing logic as the pre-computation script
+        seq_hash = hashlib.md5(sequence.encode()).hexdigest()
+        cache_base_dir = "./structure_cache"
+        subdir = seq_hash[:2]
+        cache_path = os.path.join(cache_base_dir, subdir, f"{seq_hash}.pkl")
+
+        if not os.path.exists(cache_path):
+            logger.error(f"错误：找不到预计算的结构特征文件: {cache_path}")
+            logger.error(f"序列 (索引 {idx}, 前10个字符: {sequence[:10]}): {sequence}")
+            logger.error("请确保已成功运行 precompute_structure_features.py 脚本。")
+            raise FileNotFoundError(f"缓存文件不存在: {cache_path}")
+
+        try:
+            with open(cache_path, 'rb') as f:
+                return pickle.load(f)
+        except Exception as e:
+            logger.error(f"加载缓存文件 {cache_path} 失败: {e}")
+            raise
     
     def _apply_augmentation(self, item: Dict) -> Dict:
         """Apply data augmentation"""

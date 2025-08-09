@@ -8,7 +8,7 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 
 setup(
     name="structdiff",
-    version="0.1.0",
+    version="8.0.0",
     author="Your Name",
     author_email="your.email@example.com",
     description="Structure-Aware Diffusion Model for Peptide Generation",

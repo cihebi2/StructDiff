@@ -286,16 +286,40 @@ def main():
     # 设置设备（在配置加载之后）
     device = setup_device(config, args.device)
     
-    # 创建训练配置 - 从配置文件读取评估设置
+    # 从主配置中提取训练和评估相关的配置
+    train_params = config.get('separated_training', {})
+    stage1_params = train_params.get('stage1', {})
+    stage2_params = train_params.get('stage2', {})
     evaluation_config = config.get('evaluation', {})
+    enhancements_config = config.get('training_enhancements', {})
+
+    # 创建训练配置，优先使用YAML中的值，然后才是dataclass的默认值
     training_config = SeparatedTrainingConfig(
         data_dir=args.data_dir,
         output_dir=args.output_dir,
         checkpoint_dir=str(Path(args.output_dir) / "checkpoints"),
-        use_cfg=args.use_cfg,
-        use_length_control=args.use_length_control,
-        use_amp=args.use_amp,
-        use_ema=args.use_ema,
+        
+        # 阶段1
+        stage1_epochs=stage1_params.get('epochs', 200),
+        stage1_lr=stage1_params.get('learning_rate', 1e-4),
+        stage1_batch_size=stage1_params.get('batch_size', 32),
+        stage1_gradient_clip=stage1_params.get('gradient_clip', 1.0),
+        stage1_warmup_steps=stage1_params.get('warmup_steps', 1000),
+
+        # 阶段2
+        stage2_epochs=stage2_params.get('epochs', 100),
+        stage2_lr=stage2_params.get('learning_rate', 5e-5),
+        stage2_batch_size=stage2_params.get('batch_size', 64),
+        stage2_gradient_clip=stage2_params.get('gradient_clip', 0.5),
+        stage2_warmup_steps=stage2_params.get('warmup_steps', 500),
+
+        # 功能开关 (命令行优先)
+        use_cfg=args.use_cfg or config.get('classifier_free_guidance', {}).get('enabled', True),
+        use_length_control=args.use_length_control or config.get('length_control', {}).get('enabled', True),
+        use_amp=args.use_amp or enhancements_config.get('use_amp', True),
+        use_ema=args.use_ema or enhancements_config.get('use_ema', True),
+        ema_decay=enhancements_config.get('ema_decay', 0.9999),
+
         # 评估配置
         enable_evaluation=evaluation_config.get('enabled', True),
         evaluate_every=evaluation_config.get('evaluate_every', 5),

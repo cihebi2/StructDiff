@@ -1,0 +1,34 @@
+{
+  "total_samples": 4693,
+  "train_samples": 2815,
+  "val_samples": 939,
+  "test_samples": 939,
+  "label_distribution": {
+    "抗菌肽": {
+      "train": 1702,
+      "val": 567,
+      "test": 568
+    },
+    "抗真菌肽": {
+      "train": 664,
+      "val": 222,
+      "test": 221
+    },
+    "抗病毒肽": {
+      "train": 449,
+      "val": 150,
+      "test": 150
+    }
+  },
+  "sequence_length": {
+    "min": 5,
+    "max": 50,
+    "mean": 20.86170892819092,
+    "median": 18.0
+  },
+  "weight_distribution": {
+    "1.0": 2837,
+    "1.5": 1107,
+    "2.0": 749
+  }
+}

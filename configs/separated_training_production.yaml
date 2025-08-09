@@ -20,7 +20,7 @@ model:
   structure_encoder:
     type: "multi_scale"
     hidden_dim: 256
-    use_esmfold: true      # 启用ESMFold结构特征！
+    use_esmfold: false      # 启用ESMFold结构特征！
     use_cache: true        # 使用预计算缓存
     cache_dir: "./cache"   # 缓存目录
     
@@ -73,7 +73,7 @@ diffusion:
 separated_training:
   # 阶段1: 去噪器训练（固定ESM编码器）
   stage1:
-    epochs: 50             # 生产训练轮数
+    epochs: 200             # 生产训练轮数
     batch_size: 2          # 减少批次大小避免内存问题
     learning_rate: 1e-4    # CPL-Diff推荐参数
     warmup_steps: 500

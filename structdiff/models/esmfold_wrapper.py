@@ -465,8 +465,12 @@ def predict_structure_with_esmfold_v2(
     
     # Compute residue depth
     ca_positions = features['positions'][:, 1]  # CA atoms
-    center = ca_positions.mean(dim=0)
-    features['residue_depth'] = torch.norm(ca_positions - center, dim=-1)
+    if len(ca_positions.shape) > 0:
+        center = ca_positions.mean(dim=0)
+        features['residue_depth'] = torch.norm(ca_positions - center, dim=-1)
+    else:
+        # Handle edge case with single residue
+        features['residue_depth'] = torch.zeros_like(ca_positions)
     
     # Compute local structure features
     features['local_backbone_rmsd'] = compute_local_backbone_rmsd(
@@ -482,7 +486,7 @@ def compute_local_backbone_rmsd(
 ) -> torch.Tensor:
     """Compute local backbone RMSD for each residue"""
     seq_len = positions.shape[0]
-    rmsd_values = torch.zeros(seq_len)
+    rmsd_values = torch.zeros(seq_len, device=positions.device)
     
     for i in range(seq_len):
         start = max(0, i - window_size // 2)
@@ -495,7 +499,10 @@ def compute_local_backbone_rmsd(
         local_coords = positions[start:end, :4]  # N, CA, C, O
         
         # Compute RMSD from ideal geometry (simplified)
-        rmsd_values[i] = torch.std(local_coords.reshape(-1, 3)).item()
+        if local_coords.numel() > 0:
+            rmsd_values[i] = torch.std(local_coords.reshape(-1, 3))
+        else:
+            rmsd_values[i] = 0.0
     
     return rmsd_values
 # Updated: 05/31/2025 15:11:07

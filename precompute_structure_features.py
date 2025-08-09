@@ -245,7 +245,7 @@ def precompute_all_structures():
         return False
     
     # 选择GPU设备
-    device = torch.device('cuda:1')  # 使用GPU 1
+    device = torch.device('cuda:2')  # 使用GPU 2
     logger.info(f"🎯 使用设备: {device}")
     
     # 创建缓存管理器

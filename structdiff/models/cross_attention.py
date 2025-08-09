@@ -67,7 +67,7 @@ class CrossModalAttention(nn.Module):
         # Apply attention mask
         if attention_mask is not None:
             mask = attention_mask.unsqueeze(1).unsqueeze(2)  # (B, 1, 1, L)
-            scores = scores.masked_fill(~mask, float('-inf'))
+            scores = scores.masked_fill(~mask.bool(), float('-inf'))
         
         # Compute attention weights
         attn_weights = F.softmax(scores, dim=-1)

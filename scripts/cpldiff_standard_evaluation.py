@@ -296,20 +296,35 @@ class CPLDiffStandardEvaluator:
                     # 获取pLDDT分数
                     plddt_per_residue = prediction_result['plddt']
                     
-                    # 计算平均pLDDT分数（按照CPL-Diff方法）
-                    if len(plddt_per_residue) > 0:
-                        mean_plddt = float(np.mean(plddt_per_residue))
+                    # 处理可能的None或空值
+                    if plddt_per_residue is None:
+                        continue
+                    
+                    # 转换为numpy数组并处理空值
+                    if hasattr(plddt_per_residue, 'numpy'):
+                        plddt_array = plddt_per_residue.cpu().numpy()
+                    else:
+                        plddt_array = np.array(plddt_per_residue)
+                    
+                    # 确保是有效的数字数组
+                    plddt_array = plddt_array[~np.isnan(plddt_array) & ~np.isinf(plddt_array)]
+                    
+                    if len(plddt_array) > 0:
+                        mean_plddt = float(np.mean(plddt_array))
                         plddt_scores.append(mean_plddt)
                         valid_predictions += 1
                 
             except Exception as e:
                 print(f"⚠️ 预测序列 '{seq[:20]}...' 的结构失败: {e}")
+                # 打印详细错误信息用于调试
+                import traceback
+                print(f"详细错误: {traceback.format_exc()}")
                 continue
         
         if plddt_scores:
             result = {
-                'mean_plddt': mean(plddt_scores),
-                'std_plddt': stdev(plddt_scores) if len(plddt_scores) > 1 else 0.0,
+                'mean_plddt': float(np.mean(plddt_scores)),
+                'std_plddt': float(np.std(plddt_scores)) if len(plddt_scores) > 1 else 0.0,
                 'valid_predictions': valid_predictions,
                 'method': 'ESMFold_standard',
                 'plddt_values': plddt_scores[:100]  # 保存前100个
@@ -351,31 +366,48 @@ class CPLDiffStandardEvaluator:
                         f.write(f">seq_{i}\n{seq}\n")
             
             # 使用modlAMP计算不稳定性指数
-            desc = GlobalDescriptor(str(temp_fasta))
-            desc.instability_index()
-            instability_scores = desc.descriptor.squeeze()
-            
-            # 清理临时文件
-            temp_fasta.unlink()
-            
-            if len(instability_scores) > 0:
-                # 确保是数组格式
+            try:
+                desc = GlobalDescriptor(str(temp_fasta))
+                desc.instability_index()
+                instability_scores = desc.descriptor.squeeze()
+                
+                # 清理临时文件
+                temp_fasta.unlink()
+                
+                # 处理可能的None或空值
+                if instability_scores is None:
+                    return {'error': 'No instability scores computed', 'method': 'modlAMP_standard'}
+                
+                # 转换为数组格式
                 if isinstance(instability_scores, (int, float)):
                     instability_scores = [instability_scores]
+                elif hasattr(instability_scores, 'numpy'):
+                    instability_scores = instability_scores.numpy()
+                else:
+                    instability_scores = list(instability_scores)
                 
-                result = {
-                    'mean_instability': mean(instability_scores),
-                    'std_instability': stdev(instability_scores) if len(instability_scores) > 1 else 0.0,
-                    'min_instability': min(instability_scores),
-                    'max_instability': max(instability_scores),
-                    'stable_peptides_ratio': len([s for s in instability_scores if s < 40]) / len(instability_scores),
-                    'method': 'modlAMP_standard',
-                    'instability_values': instability_scores[:100]
-                }
-                print(f"✅ 不稳定性指数计算完成: {result['mean_instability']:.2f}±{result['std_instability']:.2f}")
-                return result
-            else:
-                return {'error': 'No instability scores computed', 'method': 'modlAMP_standard'}
+                # 处理空值和NaN
+                instability_scores = [float(s) for s in instability_scores if s is not None and not np.isnan(s)]
+                
+                if len(instability_scores) > 0:
+                    result = {
+                        'mean_instability': float(np.mean(instability_scores)),
+                        'std_instability': float(np.std(instability_scores)) if len(instability_scores) > 1 else 0.0,
+                        'min_instability': float(np.min(instability_scores)),
+                        'max_instability': float(np.max(instability_scores)),
+                        'stable_peptides_ratio': len([s for s in instability_scores if s < 40]) / len(instability_scores),
+                        'method': 'modlAMP_standard',
+                        'instability_values': instability_scores[:100]
+                    }
+                    print(f"✅ 不稳定性指数计算完成: {result['mean_instability']:.2f}±{result['std_instability']:.2f}")
+                    return result
+                else:
+                    return {'error': 'No valid instability scores', 'method': 'modlAMP_standard'}
+                    
+            except Exception as e:
+                print(f"❌ GlobalDescriptor错误: {e}")
+                temp_fasta.unlink()
+                return {'error': str(e), 'method': 'modlAMP_standard'}
                 
         except Exception as e:
             print(f"❌ 不稳定性指数计算失败: {e}")
@@ -576,37 +608,69 @@ class CPLDiffStandardEvaluator:
             # 按照CPL-Diff的方法计算各项性质
             results = {}
             
-            # 1. 电荷 (pH=7.4, Bjellqvist方法)
-            desc.charge(ph=7.4, amide=True)  # Bjellqvist方法
-            charges = desc.descriptor.squeeze()
-            results['charge'] = {
-                'mean': mean(charges) if len(charges) > 0 else float('nan'),
-                'std': stdev(charges) if len(charges) > 1 else 0.0
-            }
+            try:
+                # 1. 电荷 (pH=7.4, Bjellqvist方法)
+                desc.charge(ph=7.4, amide=True)  # Bjellqvist方法
+                charges = desc.descriptor.squeeze()
+                if hasattr(charges, '__iter__'):
+                    charges_list = list(charges)
+                else:
+                    charges_list = [float(charges)]
+                results['charge'] = {
+                    'mean': mean(charges_list) if len(charges_list) > 0 else float('nan'),
+                    'std': stdev(charges_list) if len(charges_list) > 1 else 0.0
+                }
+            except (AttributeError, TypeError) as e:
+                print(f"⚠️ 电荷计算错误: {e}")
+                results['charge'] = {'mean': float('nan'), 'std': 0.0}
             
             # 2. 等电点
-            desc.isoelectric_point(amide=True)
-            isoelectric_points = desc.descriptor.squeeze()
-            results['isoelectric_point'] = {
-                'mean': mean(isoelectric_points) if len(isoelectric_points) > 0 else float('nan'),
-                'std': stdev(isoelectric_points) if len(isoelectric_points) > 1 else 0.0
-            }
+            try:
+                desc.isoelectric_point(amide=True)
+                isoelectric_points = desc.descriptor.squeeze()
+                if hasattr(isoelectric_points, '__iter__'):
+                    points_list = list(isoelectric_points)
+                else:
+                    points_list = [float(isoelectric_points)]
+                results['isoelectric_point'] = {
+                    'mean': mean(points_list) if len(points_list) > 0 else float('nan'),
+                    'std': stdev(points_list) if len(points_list) > 1 else 0.0
+                }
+            except (AttributeError, TypeError) as e:
+                print(f"⚠️ 等电点计算错误: {e}")
+                results['isoelectric_point'] = {'mean': float('nan'), 'std': 0.0}
             
             # 3. 疏水性 (Eisenberg标度, 窗口大小7)
-            desc.eisenberg_consensus(window=7)
-            hydrophobicity = desc.descriptor.squeeze()
-            results['hydrophobicity'] = {
-                'mean': mean(hydrophobicity) if len(hydrophobicity) > 0 else float('nan'),
-                'std': stdev(hydrophobicity) if len(hydrophobicity) > 1 else 0.0
-            }
+            try:
+                desc.eisenberg_consensus(window=7)
+                hydrophobicity = desc.descriptor.squeeze()
+                if hasattr(hydrophobicity, '__iter__'):
+                    hydro_list = list(hydrophobicity)
+                else:
+                    hydro_list = [float(hydrophobicity)]
+                results['hydrophobicity'] = {
+                    'mean': mean(hydro_list) if len(hydro_list) > 0 else float('nan'),
+                    'std': stdev(hydro_list) if len(hydro_list) > 1 else 0.0
+                }
+            except (AttributeError, TypeError) as e:
+                print(f"⚠️ 疏水性计算错误: {e}")
+                results['hydrophobicity'] = {'mean': float('nan'), 'std': 0.0}
             
             # 4. 芳香性 (基于Phe, Trp, Tyr的出现)
-            desc.aromaticity()
-            aromaticity = desc.descriptor.squeeze()
-            results['aromaticity'] = {
-                'mean': mean(aromaticity) if len(aromaticity) > 0 else float('nan'),
-                'std': stdev(aromaticity) if len(aromaticity) > 1 else 0.0
-            }
+            try:
+                desc.aromaticity()
+                aromaticity = desc.descriptor.squeeze()
+                if hasattr(aromaticity, '__iter__'):
+                    aroma_list = list(aromaticity)
+                else:
+                    aroma_list = [float(aromaticity)]
+                results['aromaticity'] = {
+                    'mean': mean(aroma_list) if len(aroma_list) > 0 else float('nan'),
+                    'std': stdev(aroma_list) if len(aroma_list) > 1 else 0.0
+                }
+            except (AttributeError, TypeError) as e:
+                print(f"⚠️ 芳香性计算错误: {e}")
+                results['aromaticity'] = {'mean': float('nan'), 'std': 0.0}
             
             # 清理临时文件
             temp_fasta.unlink()

@@ -327,37 +327,65 @@ class LengthAwareDataCollator:
             result['target_lengths'] = target_lengths
             result['length_mask'] = length_mask
         
-        # 添加结构信息（如果有）- 安全处理不同形状的结构张量
-        if 'structures' in batch[0]:
-            structures = [item.get('structures') for item in batch]
-            # 只有当所有结构都不为None且形状兼容时才尝试堆叠
-            if all(s is not None for s in structures):
-                try:
-                    # 检查是否为字典格式的结构特征
-                    if isinstance(structures[0], dict):
-                        # 处理字典格式的结构特征
-                        result['structures'] = {}
-                        for key in structures[0].keys():
-                            key_tensors = [s[key] for s in structures]
-                            # 只有形状兼容的张量才堆叠
-                            if all(t.shape == key_tensors[0].shape for t in key_tensors):
-                                result['structures'][key] = torch.stack(key_tensors)
-                            else:
-                                # 形状不匹配时跳过该键
-                                logger.warning(f"结构特征键 '{key}' 的形状不匹配，跳过堆叠")
-                    else:
-                        # 处理张量格式的结构特征
-                        if all(s.shape == structures[0].shape for s in structures):
-                            result['structures'] = torch.stack(structures)
+        # 添加结构信息（如果有）- 实现动态填充
+        if 'structures' in batch[0] and batch[0]['structures'] is not None:
+            structure_keys = batch[0]['structures'].keys()
+            collated_structures = {key: [] for key in structure_keys}
+            
+            # 收集所有样本的结构特征
+            for item in batch:
+                structures = item.get('structures')
+                if structures:
+                    for key in structure_keys:
+                        collated_structures[key].append(structures[key])
+            
+            result['structures'] = {}
+            max_len = result['sequences'].size(1) # 以序列长度为准
+
+            for key, tensors in collated_structures.items():
+                if not tensors or not isinstance(tensors[0], torch.Tensor):
+                    continue
+
+                # 统一填充所有张量到批次中的最大长度
+                padded_tensors = []
+                for tensor in tensors:
+                    pad_dims = []
+                    # 从最后一个维度开始反向计算需要填充的量
+                    for i in range(tensor.dim() - 1, -1, -1):
+                        # 只填充与序列长度相关的维度
+                        if tensor.shape[i] < max_len:
+                            pad_amount = max_len - tensor.shape[i]
+                            pad_dims.extend([0, pad_amount])
                         else:
-                            logger.warning("结构张量形状不匹配，跳过结构特征")
-                            result['structures'] = None
-                except Exception as e:
-                    logger.warning(f"处理结构特征时出错: {e}，跳过结构特征")
-                    result['structures'] = None
-            else:
-                result['structures'] = None
+                            # 如果维度大于等于max_len，截断它
+                            if tensor.shape[i] > max_len:
+                                tensor = tensor.narrow(i, 0, max_len)
+                            pad_dims.extend([0, 0])
+                    
+                    # 如果需要填充，则应用
+                    if any(p > 0 for p in pad_dims):
+                        padded_tensor = torch.nn.functional.pad(tensor, pad_dims, "constant", 0)
+                        padded_tensors.append(padded_tensor)
+                    else:
+                        padded_tensors.append(tensor)
+                
+                try:
+                    stacked_tensor = torch.stack(padded_tensors)
+                    result['structures'][key] = stacked_tensor.cpu()
+                except RuntimeError as e:
+                    logger.warning(f"堆叠填充后的结构特征 '{key}' 失败: {e}")
+                    # 可以在这里添加更复杂的处理逻辑，比如单独处理每个样本
+                    pass
         
+        # 确保所有返回的张量都在CPU上，以便DataLoader正确处理
+        for key, value in result.items():
+            if isinstance(value, torch.Tensor):
+                result[key] = value.cpu()
+            elif isinstance(value, dict):
+                for sub_key, sub_value in value.items():
+                    if isinstance(sub_value, torch.Tensor):
+                        result[key][sub_key] = sub_value.cpu()
+
         return result
 
 

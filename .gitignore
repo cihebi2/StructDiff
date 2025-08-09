@@ -48,8 +48,19 @@ venv/
 # 数据文件（大文件）
 *.csv
 *.tsv
-*.json
-*.pkl
+# 排除特定的大数据文件，但保留配置和结果文件
+data/raw/*.json
+data/raw/*.pkl
+cache/*.pkl
+structure_cache/*.pkl
+data/processed/structure_cache/*.pkl
+# 保留重要配置和结果文件
+!evaluation_results*.json
+!data/processed/dataset_stats.json
+!data/processed/length_distributions.json  
+!data/processed/statistics.json
+!structure_cache/cache_index.json
+!gpu_optimization_report*.json
 *.h5
 *.hdf5
 

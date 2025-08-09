@@ -2,7 +2,7 @@
 StructDiff: Structure-Aware Diffusion Model for Peptide Generation
 """
 
-__version__ = "0.1.0"
+__version__ = "8.0.0"
 __author__ = "Your Name"
 __email__ = "your.email@example.com"
 
